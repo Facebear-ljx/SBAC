@@ -44,7 +44,7 @@ def main():
                       Use_W=args.importance
                       )
 
-    agent_SBAC.learn_SBAC()
+    agent_SBAC.learn()
 
 
 if __name__ == '__main__':

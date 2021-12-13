@@ -86,16 +86,6 @@ class SBAC:
         self.Use_W = Use_W
         self.file_loc = prepare_env(env_name)
 
-        # if self.file_loc[5] == 'hopper':
-        #     from statics import hopper
-        #     self.terminator_function = hopper.StaticFns.termination_fn
-        # if self.file_loc[5] == 'halfcheetah':
-        #     from statics import halfcheetah
-        #     self.terminator_function = halfcheetah.StaticFns.termination_fn
-        # if self.file_loc[5] == 'walker2d':
-        #     from statics import walker2d
-        #     self.terminator_function = walker2d.StaticFns.termination_fn
-
         self.logger = {
             'delta_t': time.time_ns(),
             't_so_far': 0,  # time_steps so far
@@ -115,7 +105,7 @@ class SBAC:
                 self.rollout(pi='miu')
         torch.save(self.bc_standard_net.state_dict(), self.file_loc[1])
 
-    def learn_SBAC(self, total_time_step=1e+6):
+    def learn(self, total_time_step=1e+6):
         i_so_far = 0
 
         # load pretrain model parameters
