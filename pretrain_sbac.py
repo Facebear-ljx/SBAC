@@ -17,7 +17,7 @@ def main():
     parser.add_argument(
         '--num_hidden', type=int, default=256, metavar='hidden', help='num_hidden (default: 256)')
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
-    parser.add_argument('--algo', default='HPO', help='HPO or SBAC or others')
+    parser.add_argument('--algo', default='SBAC', help='SBAC or others')
     parser.add_argument('--env_name', help='choose your mujoco env')
     args = parser.parse_args()
     wandb.config.update(args)

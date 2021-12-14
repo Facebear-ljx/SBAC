@@ -127,10 +127,10 @@ class SBAC:
 
             # Actor_standard, calculate the log(\pi)
             action_pi = self.actor_net.get_action(state)
-            log_pi = self.actor_net.get_log_density(state_norm, action_pi)
+            # log_pi = self.actor_net.get_log_density(state_norm, action_pi)
             log_miu = self.bc_standard_net.get_log_density(state_norm, action_pi)
-            pro_pi = torch.clip(torch.exp(log_pi), max=1e+8)
-            pro_miu = torch.clip(torch.exp(log_miu), max=1e+8)
+            # pro_pi = torch.clip(torch.exp(log_pi), max=1e+8)
+            # pro_miu = torch.clip(torch.exp(log_miu), max=1e+8)
 
             # importance sampling ratio W
             # w_loss = self.build_w_loss(state, action, next_state)

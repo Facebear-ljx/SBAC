@@ -272,6 +272,8 @@ class HPO:
 
     def save_parameters(self):
         torch.save(self.q_net.state_dict(), self.file_loc[0])
+        torch.save(self.q_pi_net.state_dict(), self.file_loc[2])
+        torch.save(self.actor_net.state_dict(), self.file_loc[3])
 
     def load_parameters(self):
         self.bc_standard_net.load_state_dict(torch.load(self.file_loc[1]))
