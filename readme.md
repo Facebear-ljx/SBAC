@@ -1,1 +1,1 @@
-**Facebear's implementation for SBAC and PPO**
+**Facebear's implementation for SBAC(soft behavior regularized actor critic) and PPO**
