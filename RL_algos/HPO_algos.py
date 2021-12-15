@@ -151,11 +151,15 @@ class HPO:
             actor_loss.backward()
             self.actor_optim.step()
 
+            # evaluate
             if i_so_far % 500 == 0:
                 self.rollout(pi='pi')
                 self.rollout(pi='miu')
 
-            # if i_so_far % 100 == 0:
+            # # save model
+            # if i_so_far % 100000 == 0:
+            #     self.save_parameters()
+
             wandb.log({"actor_loss": actor_loss.item(),
                        "alpha": self.alpha.item(),
                        # "w_loss": w_loss.item(),

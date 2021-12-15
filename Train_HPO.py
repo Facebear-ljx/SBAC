@@ -4,7 +4,7 @@ from RL_algos.HPO_algos import HPO
 
 
 def main():
-    wandb.init(project="train", entity="facebear")
+    wandb.init(project="train_hpo", entity="facebear")
 
     # Parameters
     parser = argparse.ArgumentParser(description='Solve the Hopper-v2 with SBAC')

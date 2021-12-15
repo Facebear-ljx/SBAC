@@ -11,7 +11,7 @@ from torch.distributions import MultivariateNormal
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
 
-wandb.init(project="hopper", entity="facebear")
+wandb.init(project="online fine-tuning", entity="facebear")
 
 # Parameters
 parser = argparse.ArgumentParser(description='Solve the Hopper-v2 with PPO')
