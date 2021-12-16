@@ -70,6 +70,7 @@ class SBAC:
         self.s_buffer, self.a_buffer, self.next_s_buffer, self.not_done_buffer, self.r_buffer = [], [], [], [], []
 
         self.actor_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
+        self.actor_last_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
         self.bc_standard_net = BC_standard(num_state, num_action, num_hidden, device).float().to(device)
         self.q_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
         self.q_pi_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
@@ -191,47 +192,54 @@ class SBAC:
 
         # Online fine-tuning !
         while i_so_far < total_time_step:
-            i_so_far += 1
             # online collect data
             total_rollout_steps = self.rollout_online(rollout_length)
+            i_so_far += 1
             t_so_far += total_rollout_steps
 
-            state, action, next_state, reward, not_done = self.sample_from_online_buffer(total_rollout_steps, self.batch_size)
+            # copy the actor parameters
+            for target_param, param in zip(self.actor_last_net.parameters(), self.actor_net.parameters()):
+                target_param.data.copy_(param)
 
-            # bc fine-tuning
-            # self.bc_fine_tune(state, action)
+            for _ in range(10):
+                state, action, next_state, reward, not_done = self.sample_from_online_buffer(total_rollout_steps, self.batch_size)
 
-            # Q_pi and Q_miu fine-tuning
-            q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
-            q_miu_loss, q_miu_mean = self.train_Q_miu(state, action, next_state, reward, not_done)
+                # bc fine-tuning
+                # self.bc_fine_tune(state, action)
 
-            # Actor_standard, calculate the log(\miu)
-            action_pi = self.actor_net.get_action(state)
-            state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
-            log_pi = self.actor_net.get_log_density(state, action)
-            log_miu = self.bc_standard_net.get_log_density(state_norm, action_pi)
+                # Q_pi and Q_miu fine-tuning
+                q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
+                q_miu_loss, q_miu_mean = self.train_Q_miu(state, action, next_state, reward, not_done)
 
-            A = self.q_pi_net(state, action_pi)
+                # Actor_standard, calculate the log(\miu)
+                action_pi = self.actor_net.get_action(state)
+                state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
+                log_pi_last = self.actor_last_net.get_log_density(state, action_pi)
+                log_miu = self.bc_standard_net.get_log_density(state_norm, action_pi)
 
-            # policy update
-            actor_loss = torch.mean(-1. * A - 0.01 * log_miu)
-            self.actor_optim.zero_grad()
-            actor_loss.backward()
-            self.actor_optim.step()
+                A = self.q_pi_net(state, action_pi)
+
+                # policy update
+                actor_loss = torch.mean(-1. * A - 0.2 * log_miu)
+                self.actor_optim.zero_grad()
+                actor_loss.backward()
+                self.actor_optim.step()
+
+                wandb.log({"actor_loss": actor_loss.item(),
+                           # "w_loss": w_loss.item(),
+                           # "w_mean": w.mean().item(),
+                           "q_pi_loss": q_pi_loss,
+                           "q_pi_mean": q_pi_mean,
+                           "q_miu_loss": q_miu_loss,
+                           "q_miu_mean": q_miu_mean,
+                           "log_miu": log_miu.mean().item(),
+                           "log_pi_last": log_pi_last.mean().item()
+                           })
 
             # evaluate
-            self.rollout_evaluate(pi='pi')
-            self.rollout_evaluate(pi='miu')
-
-            wandb.log({"actor_loss": actor_loss.item(),
-                       # "w_loss": w_loss.item(),
-                       # "w_mean": w.mean().item(),
-                       "q_pi_loss": q_pi_loss,
-                       "q_pi_mean": q_pi_mean,
-                       "q_miu_loss": q_miu_loss,
-                       "q_miu_mean": q_miu_mean,
-                       "log_miu": log_miu.mean().item()
-                       })
+            if i_so_far % 10 == 0:
+                self.rollout_evaluate(pi='pi')
+                self.rollout_evaluate(pi='miu')
 
     def build_w_loss(self, s1, a1, s2):
         w_s1 = self.w_net(s1)
@@ -374,13 +382,8 @@ class SBAC:
         self.s_buffer = np.array(s_buffer)
         self.a_buffer = np.array(a_buffer)
         self.next_s_buffer = np.array(next_s_buffer)
-        self.r_buffer = np.array(r_buffer)
-        self.not_done_buffer = np.array(not_done_buffer)
-        # self.s_buffer = torch.tensor(s_buffer, dtype=torch.float).to(self.device)
-        # self.a_buffer = torch.tensor(a_buffer, dtype=torch.float).to(self.device)
-        # self.next_s_buffer = torch.tensor(next_s_buffer, dtype=torch.float).to(self.device)
-        # self.r_buffer = torch.tensor(r_buffer, dtype=torch.float).to(self.device)
-        # self.not_done_buffer = torch.tensor(not_done_buffer, dtype=torch.int).to(self.device)
+        self.r_buffer = np.expand_dims(np.array(r_buffer), axis=1)
+        self.not_done_buffer = np.expand_dims(np.array(not_done_buffer), axis=1)
         return total_rollout_steps
 
     def sample_from_online_buffer(self, total_rollout_steps, batch_size):
