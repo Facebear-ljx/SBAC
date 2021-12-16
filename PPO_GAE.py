@@ -28,7 +28,7 @@ parser.add_argument(
 parser.add_argument(
     '--batch_size', type=int, default=64, metavar='BS', help='batch_size (default: 64)')
 parser.add_argument(
-    '--num_hidden', type=int, default=64, metavar='hidden', help='num_hidden (default: 64)')
+    '--num_hidden', type=int, default=256, metavar='hidden', help='num_hidden (default: 64)')
 parser.add_argument('--seed', type=int, default=10, metavar='N', help='random seed (default: 0)')
 parser.add_argument('--render', action='store_true', default=False, help='render the environment')
 parser.add_argument('--device', default='cpu', help='cuda or cpu')
