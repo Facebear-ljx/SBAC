@@ -217,7 +217,7 @@ class SBAC:
                 log_pi_last = self.actor_last_net.get_log_density(state, action_pi)
                 log_miu = self.bc_standard_net.get_log_density(state_norm, action_pi)
 
-                A = self.q_pi_net(state, action_pi)
+                A = self.q_net(state, action_pi)
 
                 # policy update
                 actor_loss = torch.mean(-1. * A - 0.2 * log_miu)
