@@ -10,6 +10,7 @@ import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor, BC_standard, Q_critic, Alpha, W
+import matplotlib.pyplot as plt
 
 ALPHA_MAX = 500.
 ALPHA_MIN = 0.2
@@ -51,13 +52,16 @@ class SBAC:
 
         super(SBAC, self).__init__()
         self.env = gym.make(env_name)
+        self.env2 = gym.make('halfcheetah-medium-replay-v2')
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
         self.dataset = self.env.get_dataset()
+        self.dataset2 = self.env2.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
+        self.replay_buffer2 = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
                                                                   scale_rewards=True)
-
+        self.replay_buffer2.convert_D4RL(d4rl.qlearning_dataset(self.env2, self.dataset2), scale_rewards=True)
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
         self.device = device
@@ -148,6 +152,7 @@ class SBAC:
             # w = self.w_net(state)
 
             A = self.q_net(state, action_pi)
+            # A_pi = self.q_pi_net(state, action_pi)
 
             if self.auto_alpha:
                 self.update_alpha(state, action_pi.detach(), log_miu.detach())
@@ -202,7 +207,8 @@ class SBAC:
                 target_param.data.copy_(param)
 
             for _ in range(10):
-                state, action, next_state, reward, not_done = self.sample_from_online_buffer(total_rollout_steps, self.batch_size)
+                state, action, next_state, reward, not_done = self.sample_from_online_buffer(total_rollout_steps,
+                                                                                             self.batch_size)
 
                 # bc fine-tuning
                 # self.bc_fine_tune(state, action)
@@ -233,7 +239,9 @@ class SBAC:
                            "q_miu_loss": q_miu_loss,
                            "q_miu_mean": q_miu_mean,
                            "log_miu": log_miu.mean().item(),
-                           "log_pi_last": log_pi_last.mean().item()
+                           "log_pi_last": log_pi_last.mean().item(),
+                           "Q_pi-Q_miu": q_pi_mean - q_miu_mean,
+                           "reward": reward.mean().item()
                            })
 
             # evaluate
@@ -343,6 +351,44 @@ class SBAC:
             wandb.log({"pi_episode_reward": ep_rews})
         else:
             wandb.log({"miu_episode_reward": ep_rews})
+
+    def distance_function(self):
+        self.load_q_actor_parameters()
+        state, action, _, _, reward, _ = self.replay_buffer.sample(self.batch_size)
+        reward = reward.cpu().detach().numpy().squeeze()
+        q_pi = self.q_pi_net(state, action).cpu().detach().numpy().squeeze()
+        q_miu = self.q_net(state, action).cpu().detach().numpy().squeeze()
+        plt.figure(figsize=(5, 5), dpi=100)
+        plt.subplot(2, 3, 1)
+        plt.scatter(reward, q_pi)
+        plt.xlabel("reward")
+        plt.ylabel("q_pi")
+        plt.subplot(2, 3, 2)
+        plt.scatter(reward, q_miu)
+        plt.xlabel("reward")
+        plt.ylabel("q_miu")
+        plt.subplot(2, 3, 3)
+        plt.scatter(reward, q_pi - q_miu)
+        plt.xlabel("reward")
+        plt.ylabel("q_pi-q_miu")
+
+        state, action, _, _, reward, _ = self.replay_buffer2.sample(self.batch_size)
+        reward = reward.cpu().detach().numpy().squeeze()
+        q_pi = self.q_pi_net(state, action).cpu().detach().numpy().squeeze()
+        q_miu = self.q_net(state, action).cpu().detach().numpy().squeeze()
+        plt.subplot(2, 3, 4)
+        plt.scatter(reward, q_pi, edgecolors='r')
+        plt.xlabel("reward")
+        plt.ylabel("q_pi")
+        plt.subplot(2, 3, 5)
+        plt.scatter(reward, q_miu, edgecolors='r')
+        plt.xlabel("reward")
+        plt.ylabel("q_miu")
+        plt.subplot(2, 3, 6)
+        plt.scatter(reward, q_pi - q_miu, edgecolors='r')
+        plt.xlabel("reward")
+        plt.ylabel("q_pi-q_miu")
+        plt.show()
 
     def save_parameters(self):
         torch.save(self.q_net.state_dict(), self.file_loc[0])

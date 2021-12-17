@@ -45,7 +45,7 @@ def main():
                       Use_W=args.importance
                       )
 
-    agent_SBAC.online_fine_tune()
+    agent_SBAC.distance_function()
 
 
 if __name__ == '__main__':
