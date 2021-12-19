@@ -52,7 +52,7 @@ class SBAC:
 
         super(SBAC, self).__init__()
         self.env = gym.make(env_name)
-        self.env2 = gym.make('halfcheetah-medium-replay-v2')
+        self.env2 = gym.make('hopper-expert-v2')
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
         self.dataset = self.env.get_dataset()
@@ -60,8 +60,8 @@ class SBAC:
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.replay_buffer2 = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
-                                                                  scale_rewards=True)
-        self.replay_buffer2.convert_D4RL(d4rl.qlearning_dataset(self.env2, self.dataset2), scale_rewards=True)
+                                                                  scale_rewards=False, scale_state=True)
+        self.replay_buffer2.convert_D4RL(d4rl.qlearning_dataset(self.env2, self.dataset2), scale_rewards=False, scale_state=True)
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
         self.device = device
@@ -372,20 +372,20 @@ class SBAC:
         plt.xlabel("reward")
         plt.ylabel("q_pi-q_miu")
 
-        state, action, _, _, reward, _ = self.replay_buffer2.sample(self.batch_size)
-        reward = reward.cpu().detach().numpy().squeeze()
-        q_pi = self.q_pi_net(state, action).cpu().detach().numpy().squeeze()
-        q_miu = self.q_net(state, action).cpu().detach().numpy().squeeze()
+        state2, action2, _, _, reward2, _ = self.replay_buffer2.sample(self.batch_size)
+        reward2 = reward2.cpu().detach().numpy().squeeze()
+        q_pi2 = self.q_pi_net(state2, action2).cpu().detach().numpy().squeeze()
+        q_miu2 = self.q_net(state2, action2).cpu().detach().numpy().squeeze()
         plt.subplot(2, 3, 4)
-        plt.scatter(reward, q_pi, edgecolors='r')
+        plt.scatter(reward2, q_pi2, edgecolors='r')
         plt.xlabel("reward")
         plt.ylabel("q_pi")
         plt.subplot(2, 3, 5)
-        plt.scatter(reward, q_miu, edgecolors='r')
+        plt.scatter(reward2, q_miu2, edgecolors='r')
         plt.xlabel("reward")
         plt.ylabel("q_miu")
         plt.subplot(2, 3, 6)
-        plt.scatter(reward, q_pi - q_miu, edgecolors='r')
+        plt.scatter(reward2, q_pi2 - q_miu2, edgecolors='r')
         plt.xlabel("reward")
         plt.ylabel("q_pi-q_miu")
         plt.show()
