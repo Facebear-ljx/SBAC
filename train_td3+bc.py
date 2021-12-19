@@ -14,12 +14,13 @@ def main():
     wandb.config.update(args)
 
     # setup mujoco environment and SBAC agent
-    env_name = args.env_name
+    env_name = "hopper-medium-v2"
     agent_TD3_BC = TD3_BC(env_name=env_name,
                           device=args.device
                           )
 
     agent_TD3_BC.learn()
+
 
 if __name__ == '__main__':
     main()
