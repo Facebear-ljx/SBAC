@@ -48,7 +48,7 @@ class ReplayBuffer(object):
                 np.arange(dataset_size) < dataset_size - 1))
 
         print('Found %d non-terminal steps out of a total of %d steps.' % (
-            len(nonterminal_steps), dataset_size)) 
+            len(nonterminal_steps), dataset_size))
 
         self.state = dataset['observations'][nonterminal_steps]
         self.action = dataset['actions'][nonterminal_steps]
@@ -64,12 +64,13 @@ class ReplayBuffer(object):
             r_min = np.min(self.reward)
             self.reward = (self.reward - r_min) / (r_max - r_min)
 
-        s_mean = self.state.mean()
-        s_std = self.state.std()
+        s_mean = self.state.mean(0, keepdims=True)
+        s_std = self.state.std(0,  keepdims=True)
 
         # standard normalization
         if scale_state:
             self.state = (self.state - s_mean) / (s_std + 1e-5)
+            self.next_state = (self.next_state - s_mean) / (s_std + 1e-5)
 
         return s_mean, s_std
 

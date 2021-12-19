@@ -89,9 +89,6 @@ class TD3_BC:
         # Q and Critic file location
         self.file_loc = prepare_env(env_name)
 
-    def choose_action(self, state):
-        return self.actor_net(state).cpu().detach().numpy().flatten()
-
     def learn(self, total_time_step=1e+6):
         while self.total_it <= total_time_step:
             self.total_it += 1
@@ -128,7 +125,9 @@ class TD3_BC:
                 Q = self.critic_net.Q1(state, action_pi)
                 lmbda = self.alpha / Q.abs().mean().detach()
 
-                actor_loss = -lmbda * Q.mean() + nn.MSELoss()(action_pi, action)
+                bc_loss = nn.MSELoss()(action_pi, action)
+
+                actor_loss = -lmbda * Q.mean() + bc_loss
 
                 # Optimize Actor
                 self.actor_optim.zero_grad()
@@ -150,12 +149,11 @@ class TD3_BC:
             if self.total_it % self.evaluate_freq == 0:
                 self.rollout_evaluate()
 
-
-
     def rollout_evaluate(self):
         ep_rews = 0.
         state = self.env.reset()
         while True:
+            state = (state - self.s_mean)/(self.s_std + 1e-5)
             action = self.actor_net(state).cpu().detach().numpy()
             state, reward, done, _ = self.env.step(action)
             ep_rews += reward
