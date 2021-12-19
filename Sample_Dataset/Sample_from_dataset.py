@@ -37,7 +37,7 @@ class ReplayBuffer(object):
             torch.FloatTensor(self.not_done[ind]).to(self.device)
         )
 
-    def convert_D4RL(self, dataset, scale_rewards=True, scale_state=True):
+    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False):
         dataset_size = len(dataset['observations'])
         dataset['terminals'] = np.squeeze(dataset['terminals'])
         dataset['rewards'] = np.squeeze(dataset['rewards'])
@@ -58,6 +58,7 @@ class ReplayBuffer(object):
         self.not_done = 1. - dataset['terminals'][nonterminal_steps + 1].reshape(-1, 1)
         self.size = self.state.shape[0]
 
+        # min_max normalization
         if scale_rewards:
             r_max = np.max(self.reward)
             r_min = np.min(self.reward)
@@ -65,6 +66,10 @@ class ReplayBuffer(object):
 
         s_mean = self.state.mean()
         s_std = self.state.std()
+
+        # standard normalization
+        if scale_state:
+            self.state = (self.state - s_mean) / (s_std + 1e-5)
 
         return s_mean, s_std
 

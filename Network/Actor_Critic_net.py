@@ -202,6 +202,60 @@ class Actor(nn.Module):
         return action
 
 
+class Actor_deterministic(nn.Module):
+    def __init__(self, num_state, num_action, num_hidden, device):
+        super(Actor_deterministic, self).__init__()
+        self.device = device
+        self.fc1 = nn.Linear(num_state, num_hidden)
+        self.fc2 = nn.Linear(num_hidden, num_hidden)
+        self.action = nn.Linear(num_hidden, num_action)
+
+    def forward(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        a = F.relu(self.fc1(x))
+        a = F.relu(self.fc2(a))
+        a = self.action(a)
+        return torch.tanh(a)
+
+
+# Double Q_net
+class Double_Critic(nn.Module):
+    def __init__(self, num_state, num_action, num_hidden, device):
+        super(Double_Critic, self).__init__()
+        self.device = device
+
+        # Q1 architecture
+        self.fc1 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc2 = nn.Linear(num_hidden, num_hidden)
+        self.fc3 = nn.Linear(num_hidden, 1)
+
+        # Q2 architecture
+        self.fc4 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc5 = nn.Linear(num_hidden, num_hidden)
+        self.fc6 = nn.Linear(num_hidden, 1)
+
+    def forward(self, x, y):
+        sa = torch.cat([x, y], 1)
+
+        q1 = F.relu(self.fc1(sa))
+        q1 = F.relu(self.fc2(q1))
+        q1 = self.fc3(q1)
+
+        q2 = F.relu(self.fc4(sa))
+        q2 = F.relu(self.fc5(q2))
+        q2 = self.fc6(q2)
+        return q1, q2
+
+    def Q1(self, state, action):
+        sa = torch.cat([state, action], 1)
+
+        q1 = F.relu(self.fc1(sa))
+        q1 = F.relu(self.fc2(q1))
+        q1 = self.fc3(q1)
+        return q1
+
+
 class V_critic(nn.Module):
     def __init__(self, num_state, num_hidden, device):
         super(V_critic, self).__init__()
