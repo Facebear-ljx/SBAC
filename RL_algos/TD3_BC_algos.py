@@ -44,7 +44,9 @@ class TD3_BC:
                  policy_noise=0.2,
                  noise_clip=0.5,
                  policy_freq=2,
+                 explore_freq=10,
                  alpha=2.5,
+                 ratio=10,
                  device='cpu'):
 
         super(TD3_BC, self).__init__()
@@ -52,10 +54,15 @@ class TD3_BC:
         self.env = gym.make(env_name)
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
+
+        # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
-                                                                  scale_rewards=False, scale_state=True)
+
+        # split dataset into 10 peaces, each peace has 1e+5 samples
+        self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio)
+
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
 
         # self.env2 = gym.make('hopper-expert-v2')
         # self.dataset2 = self.env2.get_dataset()
@@ -67,6 +74,8 @@ class TD3_BC:
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
         self.actor_target = copy.deepcopy(self.actor_net)
         self.actor_optim = torch.optim.Adam(self.actor_net.parameters(), lr=3e-4)
+        self.actor_explore = copy.deepcopy(self.actor_net)
+        self.actor_explore_optim = torch.optim.Adam(self.actor_explore.parameters(), lr=3e-4)
 
         self.critic_net = Double_Critic(num_state, num_action, num_hidden, device).float().to(device)
         self.critic_target = copy.deepcopy(self.critic_net)
@@ -81,6 +90,7 @@ class TD3_BC:
         self.tau = tau
         self.policy_noise = policy_noise
         self.policy_freq = policy_freq
+        self.explore_freq = explore_freq
         self.evaluate_freq = 500
         self.noise_clip = noise_clip
         self.alpha = alpha
@@ -93,7 +103,7 @@ class TD3_BC:
         # Q and Critic file location
         self.file_loc = prepare_env(env_name)
 
-    def learn(self, total_time_step=1e+6):
+    def learn(self, total_time_step=1e+5):
         while self.total_it <= total_time_step:
             self.total_it += 1
 
@@ -107,15 +117,21 @@ class TD3_BC:
             # delayed policy update
             if self.total_it % self.policy_freq == 0:
                 actor_loss, bc_loss, Q_pi_mean, Q_miu_mean = self.train_actor(state, action)
+                explore_loss, _, _ = self.train_explorer(state)
+
                 wandb.log({"actor_loss": actor_loss,
+                           "bc_loss": bc_loss,
                            "Q_pi_loss": critic_loss_pi,
                            "Q_miu_loss": critic_loss_miu,
                            "Q_pi_mean": Q_pi_mean,
-                           "Q_miu_mean": Q_miu_mean
+                           "Q_miu_mean": Q_miu_mean,
+                           "Q_pi - Q_miu": Q_pi_mean - Q_miu_mean,
+                           "explore_loss": explore_loss
                            })
 
             if self.total_it % self.evaluate_freq == 0:
                 self.rollout_evaluate()
+        self.total_it = 0
 
     def train_Q_pi(self, state, action, next_state, reward, not_done):
         with torch.no_grad():
@@ -167,9 +183,9 @@ class TD3_BC:
         lmbda = self.alpha / Q_pi.abs().mean().detach()
 
         bc_loss = nn.MSELoss()(action_pi, action)
-        exploration_loss = torch.mean(Q_pi - Q_miu) * 0.2
+        exploration_loss = -torch.mean(Q_pi - Q_miu) * 0.2
 
-        actor_loss = -lmbda * Q_pi.mean() + bc_loss
+        actor_loss = -lmbda * Q_pi.mean() + bc_loss + lmbda * exploration_loss
 
         # Optimize Actor
         self.actor_optim.zero_grad()
@@ -190,6 +206,42 @@ class TD3_BC:
                bc_loss.cpu().detach().numpy().item(), \
                Q_pi.mean().cpu().detach().numpy().item(), \
                Q_miu.mean().cpu().detach().numpy().item()
+
+    def train_explorer(self, state):
+        action_explore = self.actor_explore(state)
+        Q_pi = self.critic_net.Q1(state, action_explore)
+        Q_miu = self.critic_net_miu.Q1(state, action_explore)
+
+        exploration_loss = -torch.mean(Q_pi + 0.2 * (Q_pi - Q_miu))
+
+        # Optimize explorer
+        self.actor_explore_optim.zero_grad()
+        exploration_loss.backward()
+        self.actor_explore_optim.step()
+
+        return exploration_loss.cpu().detach().numpy().item(), \
+               Q_pi.mean().cpu().detach().numpy().item(), \
+               Q_miu.mean().cpu().detach().numpy().item()
+
+    def online_exploration(self, exploration_step=int(1e+5)):
+        state = self.env.reset()
+        for i in range(exploration_step):
+            state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
+            action = self.actor_explore(state_norm).cpu().detach().numpy()
+            next_state, reward, done, _ = self.env.step(action)
+
+            state = state.squeeze()
+            action = action.squeeze()
+            next_state = next_state.squeeze()
+
+            # add online sample to replay buffer
+            self.replay_buffer.add_data_to_buffer(state, action, next_state, reward, done)
+            state = next_state
+            if done:
+                state = self.env.reset()
+
+        self.dataset = self.replay_buffer.cat_new_dataset(self.dataset)
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
 
     def rollout_evaluate(self):
         ep_rews = 0.
