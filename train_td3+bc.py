@@ -17,11 +17,11 @@ def main():
     env_name = "walker2d-medium-v2"
     agent_TD3_BC = TD3_BC(env_name=env_name,
                           device=args.device,
-                          ratio=100
+                          ratio=10
                           )
     for _ in range(100):
-        agent_TD3_BC.learn(total_time_step=int(1e+4))
-        agent_TD3_BC.online_exploration(exploration_step=int(1e+3))
+        agent_TD3_BC.learn(total_time_step=int(1e+1))
+        agent_TD3_BC.online_exploration(exploration_step=int(1e+5))
 
 
 if __name__ == '__main__':

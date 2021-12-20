@@ -52,16 +52,19 @@ class SBAC:
 
         super(SBAC, self).__init__()
         self.env = gym.make(env_name)
-        self.env2 = gym.make('hopper-expert-v2')
+
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
         self.dataset = self.env.get_dataset()
-        self.dataset2 = self.env2.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
-        self.replay_buffer2 = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
                                                                   scale_rewards=False, scale_state=True)
+
+        self.env2 = gym.make('hopper-expert-v2')
+        self.dataset2 = self.env2.get_dataset()
+        self.replay_buffer2 = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.replay_buffer2.convert_D4RL(d4rl.qlearning_dataset(self.env2, self.dataset2), scale_rewards=False, scale_state=True)
+
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
         self.device = device

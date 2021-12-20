@@ -32,7 +32,7 @@ class ReplayBuffer(object):
 
     def convert_buffer_to_numpy_dataset(self):
         return np.array(self.state_buffer), \
-               np.array(self.action), \
+               np.array(self.action_buffer), \
                np.array(self.next_state_buffer), \
                np.array(self.reward_buffer), \
                np.array(self.done_buffer)
