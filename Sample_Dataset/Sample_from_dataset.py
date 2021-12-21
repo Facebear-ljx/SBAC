@@ -23,6 +23,7 @@ class ReplayBuffer(object):
 
         self.device = torch.device(device)
 
+    # 1. Offline RL add data function: add_data_to_buffer -> convert_buffer_to_numpy_dataset -> cat_new_dataset
     def add_data_to_buffer(self, state, action, next_state, reward, done):
         self.state_buffer.append(state)
         self.action_buffer.append(action)
@@ -30,6 +31,7 @@ class ReplayBuffer(object):
         self.reward_buffer.append(reward)
         self.done_buffer.append(done)
 
+    # 2. Offline RL add data function: add_data_to_buffer -> convert_buffer_to_numpy_dataset -> cat_new_dataset
     def convert_buffer_to_numpy_dataset(self):
         return np.array(self.state_buffer), \
                np.array(self.action_buffer), \
@@ -37,6 +39,7 @@ class ReplayBuffer(object):
                np.array(self.reward_buffer), \
                np.array(self.done_buffer)
 
+    # 3. Offline RL add data function: add_data_to_buffer -> convert_buffer_to_numpy_dataset -> cat_new_dataset
     def cat_new_dataset(self, dataset):
         new_state, new_action, new_next_state, new_reward, new_done = self.convert_buffer_to_numpy_dataset()
 
@@ -61,6 +64,18 @@ class ReplayBuffer(object):
             'terminals': done,
         }
 
+    # TD3 add data function
+    def add(self, state, action, next_state, reward, done):
+        self.state[self.ptr] = state
+        self.action[self.ptr] = action
+        self.next_state[self.ptr] = next_state
+        self.reward[self.ptr] = reward
+        self.not_done[self.ptr] = 1. - done
+
+        self.ptr = (self.ptr + 1) % self.max_size
+        self.size = min(self.size + 1, self.max_size)
+
+    # Offline and Online sample data from replay buffer function
     def sample(self, batch_size):
         ind = np.random.randint(0, self.size, size=batch_size)
 
@@ -178,8 +193,6 @@ class ReplayBuffer(object):
         if scale_state:
             self.state = (self.state - s_mean) / (s_std + 1e-3)
             self.next_state = (self.next_state - s_mean) / (s_std + 1e-3)
-
-        self.ptr = len(self.state)
 
         return s_mean, s_std
 
