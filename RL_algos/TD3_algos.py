@@ -14,10 +14,6 @@ from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor_deterministic, Double_Critic
 import matplotlib.pyplot as plt
 
-ALPHA_MAX = 500.
-ALPHA_MIN = 0.2
-EPS = 1e-8
-
 
 def laplacian_kernel(x1, x2, sigma=20.0):
     d12 = torch.sum(torch.abs(x1[None] - x2[:, None]), dim=-1)
@@ -72,7 +68,7 @@ class TD3:
         self.explore_freq = explore_freq
         self.start_steps = start_steps
         self.noise_clip = noise_clip
-        self.evaluate_freq = 500
+        self.evaluate_freq = 10000
         self.batch_size = 256
         self.device = device
         self.max_action = 1.
@@ -115,11 +111,11 @@ class TD3:
 
                 # delayed policy update
                 if self.total_it % self.policy_freq == 0:
-                    actor_loss, Q_mean = self.train_actor(s_train)
+                    Q_mean = self.train_actor(s_train)
 
-                    wandb.log({"actor_loss": actor_loss,
-                               "Q_loss": critic_loss,
-                               "Q_mean": Q_mean,
+                    wandb.log({"Q_loss": critic_loss,
+                               "Q_mean/-Actor_loss": Q_mean,
+                               "steps": t
                                })
 
             if done:
@@ -170,8 +166,7 @@ class TD3:
         for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        return actor_loss.cpu().detach().numpy().item(), \
-               Q.mean().cpu().detach().numpy().item()
+        return Q.mean().cpu().detach().numpy().item()
 
     def select_action(self, state):
         action = self.actor_net(state)
@@ -191,5 +186,4 @@ class TD3:
             if done:
                 break
         wandb.log({"pi_episode_reward": ep_rews,
-                   "pi_episode_lens": ep_lens
                    })
