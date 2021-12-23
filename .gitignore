@@ -1,4 +1,4 @@
-wandb
+wandb/
 sbq
 behavior
 nohup.out
@@ -7,3 +7,4 @@ behavior/
 statics/
 wandb/PPT
 PPT/
+MUJOCO_LOG.TXT
