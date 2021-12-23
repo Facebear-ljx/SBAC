@@ -24,10 +24,9 @@ class ReplayBuffer(object):
         self.device = torch.device(device)
 
     # 1. Offline RL add data function: add_data_to_buffer -> convert_buffer_to_numpy_dataset -> cat_new_dataset
-    def add_data_to_buffer(self, state, action, next_state, reward, done):
+    def add_data_to_buffer(self, state, action, reward, done):
         self.state_buffer.append(state)
         self.action_buffer.append(action)
-        self.next_state_buffer.append(next_state)
         self.reward_buffer.append(reward)
         self.done_buffer.append(done)
 
@@ -35,31 +34,26 @@ class ReplayBuffer(object):
     def convert_buffer_to_numpy_dataset(self):
         return np.array(self.state_buffer), \
                np.array(self.action_buffer), \
-               np.array(self.next_state_buffer), \
                np.array(self.reward_buffer), \
                np.array(self.done_buffer)
 
     # 3. Offline RL add data function: add_data_to_buffer -> convert_buffer_to_numpy_dataset -> cat_new_dataset
     def cat_new_dataset(self, dataset):
-        new_state, new_action, new_next_state, new_reward, new_done = self.convert_buffer_to_numpy_dataset()
+        new_state, new_action, new_reward, new_done = self.convert_buffer_to_numpy_dataset()
 
         state = np.concatenate([dataset['observations'], new_state], axis=0)
         action = np.concatenate([dataset['actions'], new_action], axis=0)
-        next_state = np.concatenate([dataset['next_observations'], new_next_state], axis=0)
         reward = np.concatenate([dataset['rewards'].reshape(-1, 1), new_reward.reshape(-1, 1)], axis=0)
         done = np.concatenate([dataset['terminals'].reshape(-1, 1), new_done.reshape(-1, 1)], axis=0)
 
         # free the buffer when you have converted the online sample to offline dataset
         self.state_buffer = []
         self.action_buffer = []
-        self.next_state_buffer = []
-        self.next_action_buffer = []
         self.reward_buffer = []
         self.done_buffer = []
         return {
             'observations': state,
             'actions': action,
-            'next_observations': next_state,
             'rewards': reward,
             'terminals': done,
         }
@@ -77,12 +71,12 @@ class ReplayBuffer(object):
 
     # Offline and Online sample data from replay buffer function
     def sample(self, batch_size):
-        ind = np.random.randint(0, self.size, size=batch_size)
+        ind = np.random.randint(0, self.size-1, size=batch_size)    ####################################
 
         return (
             torch.FloatTensor(self.state[ind]).to(self.device),
             torch.FloatTensor(self.action[ind]).to(self.device),
-            torch.FloatTensor(self.next_state[ind]).to(self.device),
+            torch.FloatTensor(self.next_state[ind+1]).to(self.device),  ####################################
             torch.FloatTensor(self.next_action[ind]).to(self.device),
             torch.FloatTensor(self.reward[ind]).to(self.device),
             torch.FloatTensor(self.not_done[ind]).to(self.device)
