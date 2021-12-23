@@ -31,7 +31,7 @@ def mmd(x1, x2, kernel, use_sqrt=False):
         return torch.sqrt(k11 + k22 - 2 * k12 + EPS)
     else:
         return k11 + k22 - 2 * k12
-
+11
 
 class SBAC:
     max_grad_norm = 0.5
