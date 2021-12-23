@@ -71,7 +71,7 @@ class ReplayBuffer(object):
 
     # Offline and Online sample data from replay buffer function
     def sample(self, batch_size):
-        ind = np.random.randint(0, self.size-1, size=batch_size)    ####################################
+        ind = np.random.randint(0, self.size-1, size=batch_size)    ###################################
 
         return (
             torch.FloatTensor(self.state[ind]).to(self.device),
