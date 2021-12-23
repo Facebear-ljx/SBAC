@@ -1,3 +1,5 @@
+import copy
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,7 +11,7 @@ import os
 import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
-from Network.Actor_Critic_net import Actor, BC_standard, Q_critic, Alpha, W
+from Network.Actor_Critic_net import Actor, Double_Critic, Alpha
 import matplotlib.pyplot as plt
 
 ALPHA_MAX = 500.
@@ -23,46 +25,49 @@ class SAC:
 
     def __init__(self, env_name,
                  num_hidden,
-                 Use_W=True,
-                 lr_actor=1e-5,
-                 lr_critic=1e-3,
+                 lr_actor=3e-4,
+                 lr_critic=3e-4,
                  gamma=0.99,
-                 warmup_steps=1000000,
-                 alpha=100,
-                 auto_alpha=False,
-                 epsilon=1,
+                 start_steps=10000,
+                 update_after=1000,
+                 update_every=50,
+                 num_test_episodes=10,
+                 alpha=0.2,
+                 auto_alpha=True,
                  batch_size=256,
                  device='cpu'):
 
         super(SAC, self).__init__()
         self.env = gym.make(env_name)
-
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
-                                                                  scale_rewards=False, scale_state=True)
 
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
         self.device = device
         self.gamma = gamma
         self.batch_size = batch_size
+        self.start_steps = start_steps
         self.auto_alpha = auto_alpha
         self.alpha = alpha
-        self.s_buffer, self.a_buffer, self.next_s_buffer, self.not_done_buffer, self.r_buffer = [], [], [], [], []
 
         self.actor_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
-        self.q_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
-        self.target_q_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
-        self.alpha_net = Alpha(num_state, num_action, num_hidden, device).float().to(device)
-
         self.actor_optim = optim.Adam(self.actor_net.parameters(), self.lr_actor)
+
+        self.update_after = update_after
+
+        self.q_net = Double_Critic(num_state, num_action, num_hidden, device).float().to(device)
+        self.target_q_net = copy.deepcopy(self.q_net)
         self.q_optim = optim.Adam(self.q_net.parameters(), self.lr_critic)
+
+        self.alpha_net = Alpha(num_state, num_action, num_hidden, device).float().to(device)
         self.alpha_optim = optim.Adam(self.alpha_net.parameters(), self.lr_critic)
 
         self.file_loc = prepare_env(env_name)
+
+        self.total_it = 0
 
         self.logger = {
             'delta_t': time.time_ns(),
@@ -71,118 +76,89 @@ class SAC:
             'batch_lens': [],  # episodic lengths in batch
             'batch_rews': [],  # episodic returns in batch
         }
-        # from statics import reward_and_done
 
     def learn(self, total_time_step=1e+6):
-        i_so_far = 0
-
-        # load pretrain model parameters
-        if os.path.exists(self.file_loc[1]):
-            self.load_parameters()
+        episode_timesteps = 0
+        state, done = self.env.reset(), False
 
         # train !
-        while i_so_far < total_time_step:
-            i_so_far += 1
+        for t in range(int(total_time_step)):
+            episode_timesteps += 1
 
-            # sample data
-            state, action, next_state, _, reward, not_done = self.replay_buffer.sample(self.batch_size)
-            state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
-            # train Q
-            q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
-            q_miu_loss, q_miu_mean = self.train_Q_miu(state, action, next_state, reward, not_done)
+            # collect data
+            if t <= self.start_steps:
+                action = self.env.action_space.sample()
+            else:
+                action = self.actor_net.get_action(state).cpu().detach().numpy()
+            next_state, reward, done, _ = self.env.step(action)
+            done_bool = float(done) if episode_timesteps < 1000 else 0
 
-            # Actor_standard, calculate the log(\miu)
-            action_pi = self.actor_net.get_action(state)
+            # add data in replay buffer
+            self.replay_buffer.add(state, action, next_state, reward, done_bool)
+            state = next_state
 
-            A = self.q_net(state, action_pi)
+            # train agent after collection sufficient data
+            if t >= self.start_steps:
 
-            # policy update
-            actor_loss = torch.mean(-1. * A - self.alpha * log_miu)
-            self.actor_optim.zero_grad()
-            actor_loss.backward()
-            self.actor_optim.step()
+                self.total_it += 1
 
-            # evaluate
-            if i_so_far % 500 == 0:
-                self.rollout_evaluate(pi='pi')
-                self.rollout_evaluate(pi='miu')
+                # sample data
+                s_train, a_train, next_s_train, _, r_train, not_done_train = self.replay_buffer.sample(self.batch_size)
 
-            # save model
-            if i_so_far % 100000 == 0:
-                self.save_parameters()
+                # update Critic
+                critic_loss = self.train_Q_pi(s_train, a_train, next_s_train, r_train, not_done_train)
 
-            wandb.log({"actor_loss": actor_loss.item(),
-                       "alpha": self.alpha.item(),
-                       # "w_loss": w_loss.item(),
-                       # "w_mean": w.mean().item(),
-                       "q_pi_loss": q_pi_loss,
-                       "q_pi_mean": q_pi_mean,
-                       })
+                # delayed policy update
+                if self.total_it % self.update_after == 0:
+                    Q_mean = self.train_actor(s_train)
 
-    def online_fine_tune(self, total_time_step=1e+6):
-        i_so_far = 0
-        t_so_far = 0
-        rollout_length = 2048
+                    wandb.log({"Q_loss": critic_loss,
+                               "Q_mean/-Actor_loss": Q_mean,
+                               "steps": t
+                               })
 
-        # load pretrain model parameters
-        if os.path.exists(self.file_loc[1]):
-            self.load_q_actor_parameters()
-        else:
-            self.learn(total_time_step=1e+6)
+            if done:
+                state, done = self.env.reset(), False
+                episode_timesteps = 0
 
-        # Online fine-tuning !
-        while i_so_far < total_time_step:
-            # online collect data
-            total_rollout_steps = self.rollout_online(rollout_length)
-            i_so_far += 1
-            t_so_far += total_rollout_steps
+            if t % self.evaluate_freq == 0:
+                self.rollout_evaluate()
 
-            # copy the actor parameters
-            for target_param, param in zip(self.actor_last_net.parameters(), self.actor_net.parameters()):
-                target_param.data.copy_(param)
+        # while i_so_far < total_time_step:
+        #     i_so_far += 1
+        #
+        #     # sample data
+        #     state, action, next_state, _, reward, not_done = self.replay_buffer.sample(self.batch_size)
+        #     # train Q
+        #     q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
+        #
+        #     # Actor_standard, calculate the log(\miu)
+        #     action_pi = self.actor_net.get_action(state)
+        #
+        #     A = self.q_net(state, action_pi)
+        #
+        #     # policy update
+        #     actor_loss = torch.mean(-1. * A - self.alpha * log_miu)
+        #     self.actor_optim.zero_grad()
+        #     actor_loss.backward()
+        #     self.actor_optim.step()
+        #
+        #     # evaluate
+        #     if i_so_far % 500 == 0:
+        #         self.rollout_evaluate(pi='pi')
+        #         self.rollout_evaluate(pi='miu')
+        #
+        #     wandb.log({"actor_loss": actor_loss.item(),
+        #                "alpha": self.alpha.item(),
+        #                # "w_loss": w_loss.item(),
+        #                # "w_mean": w.mean().item(),
+        #                "q_pi_loss": q_pi_loss,
+        #                "q_pi_mean": q_pi_mean,
+        #                })
 
-            for _ in range(10):
-                state, action, next_state, reward, not_done = self.sample_from_online_buffer(total_rollout_steps,
-                                                                                             self.batch_size)
-
-                # bc fine-tuning
-                # self.bc_fine_tune(state, action)
-
-                # Q_pi and Q_miu fine-tuning
-                q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
-                q_miu_loss, q_miu_mean = self.train_Q_miu(state, action, next_state, reward, not_done)
-
-                # Actor_standard, calculate the log(\miu)
-                action_pi = self.actor_net.get_action(state)
-                state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
-                log_pi_last = self.actor_last_net.get_log_density(state, action_pi)
-                log_miu = self.bc_standard_net.get_log_density(state_norm, action_pi)
-
-                A = self.q_net(state, action_pi)
-
-                # policy update
-                actor_loss = torch.mean(-1. * A - 0.2 * log_miu)
-                self.actor_optim.zero_grad()
-                actor_loss.backward()
-                self.actor_optim.step()
-
-                wandb.log({"actor_loss": actor_loss.item(),
-                           # "w_loss": w_loss.item(),
-                           # "w_mean": w.mean().item(),
-                           "q_pi_loss": q_pi_loss,
-                           "q_pi_mean": q_pi_mean,
-                           "q_miu_loss": q_miu_loss,
-                           "q_miu_mean": q_miu_mean,
-                           "log_miu": log_miu.mean().item(),
-                           "log_pi_last": log_pi_last.mean().item(),
-                           "Q_pi-Q_miu": q_pi_mean - q_miu_mean,
-                           "reward": reward.mean().item()
-                           })
-
-            # evaluate
-            if i_so_far % 10 == 0:
-                self.rollout_evaluate(pi='pi')
-                self.rollout_evaluate(pi='miu')
+    def select_action(self, state):
+        action = self.actor_net.get_action(state)
+        return action.cpu().detach().numpy()
 
     def update_alpha(self, state, action, log_miu):
         alpha = self.alpha_net(state, action)
@@ -195,8 +171,6 @@ class SAC:
         return self.alpha_net(state, action).detach()
 
     def train_Q_pi(self, s, a, next_s, r, not_done):
-        # next_s_pi = next_s - self.s_mean
-        # next_s_pi /= (self.s_std + 1e-5)
         next_s_pi = next_s
         next_action_pi = self.actor_net.get_action(next_s_pi)
 
@@ -226,4 +200,3 @@ class SAC:
             if done:
                 break
         wandb.log({"pi_episode_reward": ep_rews})
-

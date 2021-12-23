@@ -133,6 +133,10 @@ class TD3_BC:
 
             if self.total_it % self.evaluate_freq == 0:
                 self.rollout_evaluate()
+
+            if self.total_it % 100000:
+                self.save_parameters()
+
         self.total_it = 0
 
     def train_Q_pi(self, state, action, next_state, reward, not_done):
@@ -258,3 +262,13 @@ class TD3_BC:
             if done:
                 break
         wandb.log({"pi_episode_reward": ep_rews})
+
+    def save_parameters(self):
+        torch.save(self.critic_net_miu.state_dict(), self.file_loc[0])
+        torch.save(self.critic_net.state_dict(), self.file_loc[2])
+        torch.save(self.actor_net.state_dict(), self.file_loc[3])
+
+    def load_parameters(self):
+        self.critic_net_miu.load_state_dict(torch.load(self.file_loc[0]))
+        self.critic_net.load_state_dict(torch.load(self.file_loc[2]))
+        self.actor_net.load_state_dict(torch.load(self.file_loc[3]))

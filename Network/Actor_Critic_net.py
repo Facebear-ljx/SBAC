@@ -6,7 +6,7 @@ from torch.distributions import MultivariateNormal, Normal
 
 MEAN_MIN = -9.0
 MEAN_MAX = 9.0
-LOG_STD_MIN = -20
+LOG_STD_MIN = -5
 LOG_STD_MAX = 2
 EPS = 1e-7
 

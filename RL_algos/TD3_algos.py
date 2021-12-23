@@ -15,22 +15,6 @@ from Network.Actor_Critic_net import Actor_deterministic, Double_Critic
 import matplotlib.pyplot as plt
 
 
-def laplacian_kernel(x1, x2, sigma=20.0):
-    d12 = torch.sum(torch.abs(x1[None] - x2[:, None]), dim=-1)
-    k12 = torch.exp(- d12 / sigma)
-    return k12
-
-
-def mmd(x1, x2, kernel, use_sqrt=False):
-    k11 = torch.mean(kernel(x1, x1), dim=[0, 1])
-    k12 = torch.mean(kernel(x1, x2), dim=[0, 1])
-    k22 = torch.mean(kernel(x2, x2), dim=[0, 1])
-    if use_sqrt:
-        return torch.sqrt(k11 + k22 - 2 * k12 + EPS)
-    else:
-        return k11 + k22 - 2 * k12
-
-
 class TD3:
     def __init__(self,
                  env_name,
@@ -74,7 +58,6 @@ class TD3:
         self.max_action = 1.
 
         self.total_it = 0
-        self.time_steps = 0
 
         # Q and Critic file location
         # self.file_loc = prepare_env(env_name)
