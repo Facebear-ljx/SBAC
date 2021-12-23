@@ -117,7 +117,7 @@ class TD3_BC:
             # delayed policy update
             if self.total_it % self.policy_freq == 0:
                 actor_loss, bc_loss, Q_pi_mean, Q_miu_mean = self.train_actor(state, action)
-                explore_loss, _, _ = self.train_explorer(state)
+                explore_loss, Q_pi_explore, Q_miu_explore = self.train_explorer(state, action)
 
                 wandb.log({"actor_loss": actor_loss,
                            "bc_loss": bc_loss,
@@ -126,7 +126,9 @@ class TD3_BC:
                            "Q_pi_mean": Q_pi_mean,
                            "Q_miu_mean": Q_miu_mean,
                            "Q_pi - Q_miu": Q_pi_mean - Q_miu_mean,
-                           "explore_loss": explore_loss
+                           "explore_loss": explore_loss,
+                           "Q_pi_explore": Q_pi_explore,
+                           "Q_miu_explore": Q_miu_explore
                            })
 
             if self.total_it % self.evaluate_freq == 0:
@@ -137,7 +139,6 @@ class TD3_BC:
         with torch.no_grad():
             # Select action according to policy and add clipped noise
             noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
-
             next_action = (self.actor_target(next_state) + noise).clamp(-self.max_action, self.max_action)
 
             # Compute the target Q value
@@ -183,9 +184,8 @@ class TD3_BC:
         lmbda = self.alpha / Q_pi.abs().mean().detach()
 
         bc_loss = nn.MSELoss()(action_pi, action)
-        exploration_loss = -torch.mean(Q_pi - Q_miu) * 0.2
 
-        actor_loss = -lmbda * Q_pi.mean() + bc_loss + lmbda * exploration_loss
+        actor_loss = -lmbda * Q_pi.mean() + bc_loss
 
         # Optimize Actor
         self.actor_optim.zero_grad()
@@ -207,12 +207,16 @@ class TD3_BC:
                Q_pi.mean().cpu().detach().numpy().item(), \
                Q_miu.mean().cpu().detach().numpy().item()
 
-    def train_explorer(self, state):
+    def train_explorer(self, state, action):
         action_explore = self.actor_explore(state)
         Q_pi = self.critic_net.Q1(state, action_explore)
         Q_miu = self.critic_net_miu.Q1(state, action_explore)
 
-        exploration_loss = -torch.mean(Q_pi + 0.2 * (Q_pi - Q_miu))
+        Q_explore = Q_pi + (Q_pi - Q_miu) * 0.2
+        lmbda = self.alpha / Q_explore.abs().mean()
+
+        bc_loss = nn.MSELoss()(action, action_explore)
+        exploration_loss = -lmbda * Q_explore.mean() + bc_loss
 
         # Optimize explorer
         self.actor_explore_optim.zero_grad()
@@ -227,7 +231,7 @@ class TD3_BC:
         state = self.env.reset()
         for i in range(exploration_step):
             state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
-            action = self.actor_explore(state_norm).cpu().detach().numpy()
+            action = self.actor_net(state_norm).cpu().detach().numpy()
             next_state, reward, done, _ = self.env.step(action)
 
             state = state.squeeze()
@@ -235,7 +239,7 @@ class TD3_BC:
             next_state = next_state.squeeze()
 
             # add online sample to replay buffer
-            self.replay_buffer.add_data_to_buffer(state, action, next_state, reward, done)
+            self.replay_buffer.add_data_to_buffer(state, action, reward, done)
             state = next_state
             if done:
                 state = self.env.reset()

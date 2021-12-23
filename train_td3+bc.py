@@ -14,14 +14,15 @@ def main():
     wandb.config.update(args)
 
     # setup mujoco environment and SBAC agent
-    env_name = "walker2d-medium-v2"
+    env_name = "hopper-medium-replay-v2"
     agent_TD3_BC = TD3_BC(env_name=env_name,
                           device=args.device,
-                          ratio=10
+                          ratio=1
                           )
-    for _ in range(100):
-        agent_TD3_BC.learn(total_time_step=int(1e+1))
-        agent_TD3_BC.online_exploration(exploration_step=int(1e+5))
+
+    for _ in range(10000):
+        agent_TD3_BC.learn(total_time_step=int(1e+6))
+        # agent_TD3_BC.online_exploration(exploration_step=int(1e+3))
 
 
 if __name__ == '__main__':
