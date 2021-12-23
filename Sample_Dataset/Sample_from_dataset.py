@@ -174,7 +174,7 @@ class ReplayBuffer(object):
 
         self.state = dataset['observations'][nonterminal_steps]
         self.action = dataset['actions'][nonterminal_steps]
-        self.next_state = dataset['next_observations'][nonterminal_steps + 1]
+        self.next_state = dataset['observations'][nonterminal_steps + 1]
         self.next_action = dataset['actions'][nonterminal_steps + 1]
         self.reward = dataset['rewards'][nonterminal_steps].reshape(-1, 1)
         self.not_done = 1. - dataset['terminals'][nonterminal_steps + 1].reshape(-1, 1)
