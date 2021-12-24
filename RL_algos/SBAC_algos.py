@@ -141,20 +141,9 @@ class SBAC:
 
             # Actor_standard, calculate the log(\miu)
             action_pi = self.actor_net.get_action(state)
-            # log_pi = self.actor_net.get_log_density(state_norm, action_pi)
             log_miu = self.bc_standard_net.get_log_density(state_norm, action_pi)
-            # pro_pi = torch.clip(torch.exp(log_pi), max=1e+8)
-            # pro_miu = torch.clip(torch.exp(log_miu), max=1e+8)
-
-            # importance sampling ratio W
-            # w_loss = self.build_w_loss(state, action, next_state)
-            # self.w_optim.zero_grad()
-            # w_loss.backward()
-            # self.w_optim.step()
-            # w = self.w_net(state)
 
             A = self.q_net(state, action_pi)
-            # A_pi = self.q_pi_net(state, action_pi)
 
             if self.auto_alpha:
                 self.update_alpha(state, action_pi.detach(), log_miu.detach())
@@ -166,25 +155,25 @@ class SBAC:
             actor_loss.backward()
             self.actor_optim.step()
 
-            # evaluate
-            if i_so_far % 500 == 0:
-                self.rollout_evaluate(pi='pi')
-                self.rollout_evaluate(pi='miu')
-
             # save model
             if i_so_far % 100000 == 0:
                 self.save_parameters()
 
-            wandb.log({"actor_loss": actor_loss.item(),
-                       "alpha": self.alpha.item(),
-                       # "w_loss": w_loss.item(),
-                       # "w_mean": w.mean().item(),
-                       "q_pi_loss": q_pi_loss,
-                       "q_pi_mean": q_pi_mean,
-                       "q_miu_loss": q_miu_loss,
-                       "q_miu_mean": q_miu_mean,
-                       "log_miu": log_miu.mean().item()
-                       })
+            if i_so_far % 3000 == 0:
+                pi_reward = self.rollout_evaluate(pi='pi')
+                miu_reward = self.rollout_evaluate(pi='miu')
+
+                wandb.log({"actor_loss": actor_loss.item(),
+                           "pi_reward": pi_reward,
+                           "miu_reward": miu_reward,
+                           "q_pi_loss": q_pi_loss,
+                           "q_pi_mean": q_pi_mean,
+                           "q_miu_loss": q_miu_loss,
+                           "q_miu_mean": q_miu_mean,
+                           "log_miu": log_miu.mean().item(),
+                           "Q_pi-Q_miu": q_pi_mean - q_miu_mean,
+                           "reward": reward.mean().item()
+                           })
 
     def online_fine_tune(self, total_time_step=1e+6):
         i_so_far = 0
@@ -212,9 +201,6 @@ class SBAC:
                 state, action, next_state, reward, not_done = self.sample_from_online_buffer(total_rollout_steps,
                                                                                              self.batch_size)
 
-                # bc fine-tuning
-                # self.bc_fine_tune(state, action)
-
                 # Q_pi and Q_miu fine-tuning
                 q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
                 q_miu_loss, q_miu_mean = self.train_Q_miu(state, action, next_state, reward, not_done)
@@ -233,23 +219,22 @@ class SBAC:
                 actor_loss.backward()
                 self.actor_optim.step()
 
-                wandb.log({"actor_loss": actor_loss.item(),
-                           # "w_loss": w_loss.item(),
-                           # "w_mean": w.mean().item(),
-                           "q_pi_loss": q_pi_loss,
-                           "q_pi_mean": q_pi_mean,
-                           "q_miu_loss": q_miu_loss,
-                           "q_miu_mean": q_miu_mean,
-                           "log_miu": log_miu.mean().item(),
-                           "log_pi_last": log_pi_last.mean().item(),
-                           "Q_pi-Q_miu": q_pi_mean - q_miu_mean,
-                           "reward": reward.mean().item()
-                           })
+                if i_so_far % 3000 == 0:
+                    pi_reward = self.rollout_evaluate(pi='pi')
+                    miu_reward = self.rollout_evaluate(pi='miu')
 
-            # evaluate
-            if i_so_far % 10 == 0:
-                self.rollout_evaluate(pi='pi')
-                self.rollout_evaluate(pi='miu')
+                    wandb.log({"actor_loss": actor_loss.item(),
+                               "pi_reward": pi_reward,
+                               "miu_reward": miu_reward,
+                               "q_pi_loss": q_pi_loss,
+                               "q_pi_mean": q_pi_mean,
+                               "q_miu_loss": q_miu_loss,
+                               "q_miu_mean": q_miu_mean,
+                               "log_miu": log_miu.mean().item(),
+                               "log_pi_last": log_pi_last.mean().item(),
+                               "Q_pi-Q_miu": q_pi_mean - q_miu_mean,
+                               "reward": reward.mean().item()
+                               })
 
     def build_w_loss(self, s1, a1, s2):
         w_s1 = self.w_net(s1)
@@ -278,8 +263,6 @@ class SBAC:
         return self.alpha_net(state, action).detach()
 
     def train_Q_pi(self, s, a, next_s, r, not_done):
-        # next_s_pi = next_s - self.s_mean
-        # next_s_pi /= (self.s_std + 1e-5)
         next_s_pi = next_s
         next_action_pi = self.actor_net.get_action(next_s_pi)
 
@@ -349,10 +332,7 @@ class SBAC:
                 if done:
                     break
 
-        if pi == 'pi':
-            wandb.log({"pi_episode_reward": ep_rews})
-        else:
-            wandb.log({"miu_episode_reward": ep_rews})
+        return ep_rews
 
     def distance_function(self):
         self.load_q_actor_parameters()

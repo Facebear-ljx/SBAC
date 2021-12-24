@@ -101,7 +101,7 @@ class TD3_BC:
                                "it_steps": self.total_it
                                })
 
-            if self.total_it % 100000:
+            if self.total_it % 100000 == 0:
                 self.save_parameters()
 
         self.total_it = 0
