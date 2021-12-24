@@ -1,3 +1,5 @@
+import copy
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -32,6 +34,7 @@ def mmd(x1, x2, kernel, use_sqrt=False):
     else:
         return k11 + k22 - 2 * k12
 
+
 class SBAC:
     max_grad_norm = 0.5
     soft_update = 0.005
@@ -57,12 +60,12 @@ class SBAC:
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
-                                                                  scale_rewards=False, scale_state=False)
+                                                                  scale_rewards=False, scale_state=True)
 
-        self.env2 = gym.make('hopper-expert-v2')
-        self.dataset2 = self.env2.get_dataset()
-        self.replay_buffer2 = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
-        self.replay_buffer2.convert_D4RL(d4rl.qlearning_dataset(self.env2, self.dataset2), scale_rewards=False, scale_state=False)
+        # self.env2 = gym.make('hopper-expert-v2')
+        # self.dataset2 = self.env2.get_dataset()
+        # self.replay_buffer2 = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
+        # self.replay_buffer2.convert_D4RL(d4rl.qlearning_dataset(self.env2, self.dataset2), scale_rewards=False, scale_state=False)
 
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
@@ -76,20 +79,24 @@ class SBAC:
         self.s_buffer, self.a_buffer, self.next_s_buffer, self.not_done_buffer, self.r_buffer = [], [], [], [], []
 
         self.actor_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
-        self.actor_last_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
-        self.bc_standard_net = BC_standard(num_state, num_action, num_hidden, device).float().to(device)
-        self.q_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
-        self.q_pi_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
-        self.target_q_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
-        self.target_q_pi_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
-        self.alpha_net = Alpha(num_state, num_action, num_hidden, device).float().to(device)
-        self.w_net = W(num_state, num_hidden, device).to(device)
-
         self.actor_optim = optim.Adam(self.actor_net.parameters(), self.lr_actor)
-        self.bc_standard_optim = optim.Adam(self.bc_standard_net.parameters(), 1e-3)
+
+        self.bc_standard_net = BC_standard(num_state, num_action, num_hidden, device).float().to(device)
+        self.bc_standard_optim = optim.Adam(self.bc_standard_net.parameters(), lr_actor)
+
+        # q_miu
+        self.q_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
+        self.target_q_net = copy.deepcopy(self.q_net)
         self.q_optim = optim.Adam(self.q_net.parameters(), self.lr_critic)
+
+        self.q_pi_net = Q_critic(num_state, num_action, num_hidden, device).float().to(device)
+        self.target_q_pi_net = copy.deepcopy(self.q_pi_net)
         self.q_pi_optim = optim.Adam(self.q_pi_net.parameters(), self.lr_critic)
+
+        self.alpha_net = Alpha(num_state, num_action, num_hidden, device).float().to(device)
         self.alpha_optim = optim.Adam(self.alpha_net.parameters(), self.lr_critic)
+
+        self.w_net = W(num_state, num_hidden, device).to(device)
         self.w_optim = optim.Adam(self.w_net.parameters(), self.lr_critic)
 
         self.Use_W = Use_W
@@ -107,17 +114,14 @@ class SBAC:
     def pretrain_bc_standard(self):
         for i in range(self.warmup_steps):
             state, action, _, _, _, _ = self.replay_buffer.sample(self.batch_size)
-            state -= self.s_mean
-            state /= (self.s_std + 1e-5)
-            self.train_bc_standard(s=state, a=action)
+            bc_loss = self.train_bc_standard(s=state, a=action)
             if i % 5000 == 0:
-                self.rollout_evaluate(pi='miu')
-        torch.save(self.bc_standard_net.state_dict(), self.file_loc[1])
+                miu_reward = self.rollout_evaluate(pi='miu')
+                wandb.log({"bc_loss": bc_loss,
+                          "miu_reward": miu_reward
+                        })
 
-    def bc_fine_tune(self, s, a):
-        s -= self.s_mean
-        s /= (self.s_std + 1e-5)
-        self.train_bc_standard(s, a)
+        torch.save(self.bc_standard_net.state_dict(), self.file_loc[1])
 
     def learn(self, total_time_step=1e+6):
         i_so_far = 0
@@ -134,14 +138,14 @@ class SBAC:
 
             # sample data
             state, action, next_state, _, reward, not_done = self.replay_buffer.sample(self.batch_size)
-            state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
+
             # train Q
             q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
             q_miu_loss, q_miu_mean = self.train_Q_miu(state, action, next_state, reward, not_done)
 
             # Actor_standard, calculate the log(\miu)
             action_pi = self.actor_net.get_action(state)
-            log_miu = self.bc_standard_net.get_log_density(state_norm, action_pi)
+            log_miu = self.bc_standard_net.get_log_density(state, action_pi)
 
             A = self.q_net(state, action_pi)
 
@@ -159,6 +163,7 @@ class SBAC:
             if i_so_far % 100000 == 0:
                 self.save_parameters()
 
+            # log_summary
             if i_so_far % 3000 == 0:
                 pi_reward = self.rollout_evaluate(pi='pi')
                 miu_reward = self.rollout_evaluate(pi='miu')
@@ -172,7 +177,8 @@ class SBAC:
                            "q_miu_mean": q_miu_mean,
                            "log_miu": log_miu.mean().item(),
                            "Q_pi-Q_miu": q_pi_mean - q_miu_mean,
-                           "reward": reward.mean().item()
+                           "reward": reward.mean().item(),
+                           "it_steps": i_so_far
                            })
 
     def online_fine_tune(self, total_time_step=1e+6):
@@ -288,7 +294,7 @@ class SBAC:
         self.bc_standard_optim.zero_grad()
         loss_bc.backward()
         self.bc_standard_optim.step()
-        wandb.log({"bc_standard_loss": loss_bc.item()})
+        return loss_bc.cpu().detach().numpy().item()
 
     def train_Q_miu(self, s, a, next_s, r, not_done):
         next_s_miu = next_s - self.s_mean
@@ -320,12 +326,9 @@ class SBAC:
             while True:
                 ep_t += 1
                 if pi == 'pi':
-                    # state -= self.s_mean
-                    # state /= (self.s_std + 1e-5)
                     action = self.actor_net.get_action(state).cpu().detach().numpy()
                 else:
-                    state -= self.s_mean
-                    state /= (self.s_std + 1e-5)
+                    state = (state - self.s_mean) / (self.s_std + 1e-5)
                     action = self.bc_standard_net.get_action(np.expand_dims(state, 0)).cpu().detach().numpy()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward

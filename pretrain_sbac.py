@@ -24,7 +24,7 @@ def main():
 
     # setup mujoco environment and SBAC agent
     env_name = args.env_name
-    # env_name = 'hopper-expert-v2'
+    # env_name = 'hopper-medium-v2'
     agent_SBAC = SBAC(env_name=env_name,
                       num_hidden=args.num_hidden,
                       lr_actor=args.lr_actor,

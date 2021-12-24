@@ -14,7 +14,7 @@ def main():
     wandb.config.update(args)
 
     # setup mujoco environment and SBAC agent
-    env_name = "hopper-medium-expert-v2"
+    env_name = args.env_name
     agent_TD3_BC = TD3_BC(env_name=env_name,
                           device=args.device,
                           ratio=1
