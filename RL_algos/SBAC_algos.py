@@ -12,7 +12,6 @@ import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor, BC_standard, Q_critic, Alpha, W
-import matplotlib.pyplot as plt
 
 ALPHA_MAX = 500.
 ALPHA_MIN = 0.2
@@ -46,15 +45,31 @@ class SBAC:
                  lr_critic=1e-3,
                  gamma=0.99,
                  warmup_steps=1000000,
-                 alpha=100,
+                 alpha=0.2,
                  auto_alpha=False,
                  epsilon=1,
                  batch_size=256,
                  device='cpu'):
+        """
+        Facebear's implementation of SBAC (Offline Reinforcement Learning with Soft Behavior Regularization)
+        Paper:https://arxiv.org/pdf/2110.07395.pdf
 
+        :param env_name: your gym environment name
+        :param num_hidden: the number of the units of the hidden layer of your network
+        :param Use_W: whether use the importance sampling ratio to update the policy in equation(8)
+        :param lr_actor: learning rate of the actor network
+        :param lr_critic: learning rate of the critic network
+        :param gamma: discounting factor of the cumulated reward
+        :param warmup_steps: the steps of the training times of behavior cloning
+        :param alpha: the hyper-parameters in equation(8)
+        :param auto_alpha: whether auto update the alpha
+        :param epsilon: the constraint
+        :param batch_size: sample batch size
+        :param device: cuda or cpu
+        """
         super(SBAC, self).__init__()
+        # prepare the env and dataset
         self.env = gym.make(env_name)
-
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
         self.dataset = self.env.get_dataset()
@@ -62,11 +77,7 @@ class SBAC:
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
                                                                   scale_rewards=False, scale_state=True)
 
-        # self.env2 = gym.make('hopper-expert-v2')
-        # self.dataset2 = self.env2.get_dataset()
-        # self.replay_buffer2 = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
-        # self.replay_buffer2.convert_D4RL(d4rl.qlearning_dataset(self.env2, self.dataset2), scale_rewards=False, scale_state=False)
-
+        # hyper-parameters
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
         self.device = device
@@ -78,6 +89,7 @@ class SBAC:
         self.epsilon = epsilon
         self.s_buffer, self.a_buffer, self.next_s_buffer, self.not_done_buffer, self.r_buffer = [], [], [], [], []
 
+        # Actor, BC, Critic_miu, Critic_pi, alpha, W
         self.actor_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
         self.actor_optim = optim.Adam(self.actor_net.parameters(), self.lr_actor)
 
@@ -109,21 +121,28 @@ class SBAC:
             'batch_lens': [],  # episodic lengths in batch
             'batch_rews': [],  # episodic returns in batch
         }
-        # from statics import reward_and_done
 
     def pretrain_bc_standard(self):
+        """
+        pretrain behavior cloning for self.warmup_steps and save the bc model parameters at self.file_loc
+        :return: None
+        """
         for i in range(self.warmup_steps):
             state, action, _, _, _, _ = self.replay_buffer.sample(self.batch_size)
             bc_loss = self.train_bc_standard(s=state, a=action)
             if i % 5000 == 0:
                 miu_reward = self.rollout_evaluate(pi='miu')
                 wandb.log({"bc_loss": bc_loss,
-                          "miu_reward": miu_reward
-                        })
-
+                           "miu_reward": miu_reward
+                           })
         torch.save(self.bc_standard_net.state_dict(), self.file_loc[1])
 
     def learn(self, total_time_step=1e+6):
+        """
+        SBAC's learning framework
+        :param total_time_step: the total iteration times for training SBAC
+        :return: None
+        """
         i_so_far = 0
 
         # load pretrain model parameters
@@ -140,7 +159,6 @@ class SBAC:
             state, action, next_state, _, reward, not_done = self.replay_buffer.sample(self.batch_size)
 
             # train Q
-            q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
             q_miu_loss, q_miu_mean = self.train_Q_miu(state, action, next_state, reward, not_done)
 
             # Actor_standard, calculate the log(\miu)
@@ -171,78 +189,17 @@ class SBAC:
                 wandb.log({"actor_loss": actor_loss.item(),
                            "pi_reward": pi_reward,
                            "miu_reward": miu_reward,
-                           "q_pi_loss": q_pi_loss,
-                           "q_pi_mean": q_pi_mean,
                            "q_miu_loss": q_miu_loss,
                            "q_miu_mean": q_miu_mean,
                            "log_miu": log_miu.mean().item(),
-                           "Q_pi-Q_miu": q_pi_mean - q_miu_mean,
                            "reward": reward.mean().item(),
                            "it_steps": i_so_far
                            })
 
-    def online_fine_tune(self, total_time_step=1e+6):
-        i_so_far = 0
-        t_so_far = 0
-        rollout_length = 2048
-
-        # load pretrain model parameters
-        if os.path.exists(self.file_loc[1]):
-            self.load_q_actor_parameters()
-        else:
-            self.learn(total_time_step=1e+6)
-
-        # Online fine-tuning !
-        while i_so_far < total_time_step:
-            # online collect data
-            total_rollout_steps = self.rollout_online(rollout_length)
-            i_so_far += 1
-            t_so_far += total_rollout_steps
-
-            # copy the actor parameters
-            for target_param, param in zip(self.actor_last_net.parameters(), self.actor_net.parameters()):
-                target_param.data.copy_(param)
-
-            for _ in range(10):
-                state, action, next_state, reward, not_done = self.sample_from_online_buffer(total_rollout_steps,
-                                                                                             self.batch_size)
-
-                # Q_pi and Q_miu fine-tuning
-                q_pi_loss, q_pi_mean = self.train_Q_pi(state, action, next_state, reward, not_done)
-                q_miu_loss, q_miu_mean = self.train_Q_miu(state, action, next_state, reward, not_done)
-
-                # Actor_standard, calculate the log(\miu)
-                action_pi = self.actor_net.get_action(state)
-                state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
-                log_pi_last = self.actor_last_net.get_log_density(state, action_pi)
-                log_miu = self.bc_standard_net.get_log_density(state_norm, action_pi)
-
-                A = self.q_net(state, action_pi)
-
-                # policy update
-                actor_loss = torch.mean(-1. * A - 0.2 * log_miu)
-                self.actor_optim.zero_grad()
-                actor_loss.backward()
-                self.actor_optim.step()
-
-                if i_so_far % 3000 == 0:
-                    pi_reward = self.rollout_evaluate(pi='pi')
-                    miu_reward = self.rollout_evaluate(pi='miu')
-
-                    wandb.log({"actor_loss": actor_loss.item(),
-                               "pi_reward": pi_reward,
-                               "miu_reward": miu_reward,
-                               "q_pi_loss": q_pi_loss,
-                               "q_pi_mean": q_pi_mean,
-                               "q_miu_loss": q_miu_loss,
-                               "q_miu_mean": q_miu_mean,
-                               "log_miu": log_miu.mean().item(),
-                               "log_pi_last": log_pi_last.mean().item(),
-                               "Q_pi-Q_miu": q_pi_mean - q_miu_mean,
-                               "reward": reward.mean().item()
-                               })
-
     def build_w_loss(self, s1, a1, s2):
+        """
+        build the importance sampling ratio training loss in equation(7)
+        """
         w_s1 = self.w_net(s1)
         w_s2 = self.w_net(s2)
         logp = self.actor_net.get_log_density(s1, a1)
@@ -259,6 +216,9 @@ class SBAC:
         return w_loss
 
     def update_alpha(self, state, action, log_miu):
+        """
+        auto update the SBAC's hyper-parameter alpha in equation(8)
+        """
         alpha = self.alpha_net(state, action)
         self.alpha_optim.zero_grad()
         alpha_loss = torch.mean(alpha * (log_miu + self.epsilon))
@@ -266,27 +226,15 @@ class SBAC:
         self.alpha_optim.step()
 
     def get_alpha(self, state, action):
+        """
+        auto get the appropriate parameter alpha in equation(8)
+        """
         return self.alpha_net(state, action).detach()
 
-    def train_Q_pi(self, s, a, next_s, r, not_done):
-        next_s_pi = next_s
-        next_action_pi = self.actor_net.get_action(next_s_pi)
-
-        target_q = r + not_done * self.target_q_pi_net(next_s, next_action_pi).detach() * self.gamma
-        loss_q = nn.MSELoss()(target_q, self.q_pi_net(s, a))
-
-        self.q_pi_optim.zero_grad()
-        loss_q.backward()
-        self.q_pi_optim.step()
-        q_mean = self.q_pi_net(s, a).mean().item()
-
-        # target Q update
-        for target_param, param in zip(self.target_q_pi_net.parameters(), self.q_pi_net.parameters()):
-            target_param.data.copy_(self.soft_update * param + (1 - self.soft_update) * target_param)
-
-        return loss_q, q_mean
-
     def train_bc_standard(self, s, a):
+        """
+        train behavior-cloning policy by maximizing the log-likelihood of the offline dataset
+        """
         self.bc_standard_net.train()
         action_log_prob = -1. * self.bc_standard_net.get_log_density(s, a)
         loss_bc = torch.mean(action_log_prob)
@@ -297,6 +245,9 @@ class SBAC:
         return loss_bc.cpu().detach().numpy().item()
 
     def train_Q_miu(self, s, a, next_s, r, not_done):
+        """
+        train the Q function of the behavior policy: \miu
+        """
         next_s_miu = next_s - self.s_mean
         next_s_miu /= (self.s_std + 1e-5)
         next_action_miu = self.bc_standard_net.get_action(next_s_miu)
@@ -315,14 +266,17 @@ class SBAC:
         return loss_q, q_mean
 
     def rollout_evaluate(self, pi='pi'):
-        ep_rews = 0.  # episode reward
+        """
+        policy evaluation function
+        :param pi: you can select pi='pi' or 'miu'. If you select the pi='pi', then the policy evaluated is the learned policy
+        :return: the evaluation result
+        """
+        ep_rews = 0.
         self.bc_standard_net.eval()
-        # self.actor_net.eval()
-        # rollout one time
         for _ in range(1):
             ep_rews = 0.
             state = self.env.reset()
-            ep_t = 0  # episode length
+            ep_t = 0
             while True:
                 ep_t += 1
                 if pi == 'pi':
@@ -334,98 +288,12 @@ class SBAC:
                 ep_rews += reward
                 if done:
                     break
-
         return ep_rews
-
-    def distance_function(self):
-        self.load_q_actor_parameters()
-        state, action, _, _, reward, _ = self.replay_buffer.sample(self.batch_size)
-        reward = reward.cpu().detach().numpy().squeeze()
-        q_pi = self.q_pi_net(state, action).cpu().detach().numpy().squeeze()
-        q_miu = self.q_net(state, action).cpu().detach().numpy().squeeze()
-        plt.figure(figsize=(5, 5), dpi=100)
-        plt.subplot(2, 3, 1)
-        plt.scatter(reward, q_pi)
-        plt.xlabel("reward")
-        plt.ylabel("q_pi")
-        plt.subplot(2, 3, 2)
-        plt.scatter(reward, q_miu)
-        plt.xlabel("reward")
-        plt.ylabel("q_miu")
-        plt.subplot(2, 3, 3)
-        plt.scatter(reward, q_pi - q_miu)
-        plt.xlabel("reward")
-        plt.ylabel("q_pi-q_miu")
-
-        state2, action2, _, _, reward2, _ = self.replay_buffer2.sample(self.batch_size)
-        reward2 = reward2.cpu().detach().numpy().squeeze()
-        q_pi2 = self.q_pi_net(state2, action2).cpu().detach().numpy().squeeze()
-        q_miu2 = self.q_net(state2, action2).cpu().detach().numpy().squeeze()
-        plt.subplot(2, 3, 4)
-        plt.scatter(reward2, q_pi2, edgecolors='r')
-        plt.xlabel("reward")
-        plt.ylabel("q_pi")
-        plt.subplot(2, 3, 5)
-        plt.scatter(reward2, q_miu2, edgecolors='r')
-        plt.xlabel("reward")
-        plt.ylabel("q_miu")
-        plt.subplot(2, 3, 6)
-        plt.scatter(reward2, q_pi2 - q_miu2, edgecolors='r')
-        plt.xlabel("reward")
-        plt.ylabel("q_pi-q_miu")
-        plt.show()
 
     def save_parameters(self):
         torch.save(self.q_net.state_dict(), self.file_loc[0])
         torch.save(self.q_pi_net.state_dict(), self.file_loc[2])
         torch.save(self.actor_net.state_dict(), self.file_loc[3])
-        # torch.save(self.target_q_net.state_dict(), self.file_loc[])
-        # torch.save(self.target_q_pi_net.state_dict(), self.file_loc[])
-
-    def rollout_online(self, rollout_length):
-        # rollout one time
-        s_buffer = []
-        a_buffer = []
-        next_s_buffer = []
-        r_buffer = []
-        not_done_buffer = []
-
-        total_rollout_steps = 0
-        while True:
-            state = self.env.reset()
-            while True:
-                total_rollout_steps += 1
-                action = self.actor_net.get_action(state).cpu().detach().numpy()
-                next_state, reward, done, _ = self.env.step(action)
-
-                s_buffer.append(state)
-                a_buffer.append(action)
-                next_s_buffer.append(next_state)
-                r_buffer.append(reward)
-                not_done_buffer.append(1 - done)
-
-                state = next_state
-                if done:
-                    break
-            if total_rollout_steps >= rollout_length:
-                break
-
-        self.s_buffer = np.array(s_buffer)
-        self.a_buffer = np.array(a_buffer)
-        self.next_s_buffer = np.array(next_s_buffer)
-        self.r_buffer = np.expand_dims(np.array(r_buffer), axis=1)
-        self.not_done_buffer = np.expand_dims(np.array(not_done_buffer), axis=1)
-        return total_rollout_steps
-
-    def sample_from_online_buffer(self, total_rollout_steps, batch_size):
-        ind = np.random.randint(0, total_rollout_steps, size=batch_size)
-        return (
-            torch.FloatTensor(self.s_buffer[ind]).to(self.device),
-            torch.FloatTensor(self.a_buffer[ind]).to(self.device),
-            torch.FloatTensor(self.next_s_buffer[ind]).to(self.device),
-            torch.FloatTensor(self.r_buffer[ind]).to(self.device),
-            torch.FloatTensor(self.not_done_buffer[ind]).to(self.device)
-        )
 
     def load_parameters(self):
         self.bc_standard_net.load_state_dict(torch.load(self.file_loc[1]))
@@ -433,7 +301,4 @@ class SBAC:
     def load_q_actor_parameters(self):
         self.bc_standard_net.load_state_dict(torch.load(self.file_loc[1]))
         self.q_net.load_state_dict(torch.load(self.file_loc[0]))
-        self.target_q_net.load_state_dict(torch.load(self.file_loc[0]))
-        self.q_pi_net.load_state_dict(torch.load(self.file_loc[2]))
-        self.target_q_pi_net.load_state_dict(torch.load(self.file_loc[2]))
         self.actor_net.load_state_dict(torch.load(self.file_loc[3]))
