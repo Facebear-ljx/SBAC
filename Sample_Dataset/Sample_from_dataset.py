@@ -154,6 +154,13 @@ class ReplayBuffer(object):
         }
 
     def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False):
+        """
+        convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
+        :param dataset: d4rl dataset, usually comes from env.get_dataset or replay_buffer.split_dataset
+        :param scale_rewards: whether scale the reward to [0, 1]
+        :param scale_state: whether scale the state to standard gaussian distribution ~ N(0, 1)
+        :return: the mean and standard deviation of states
+        """
         dataset_size = len(dataset['observations'])
         dataset['terminals'] = np.squeeze(dataset['terminals'])
         dataset['rewards'] = np.squeeze(dataset['rewards'])
