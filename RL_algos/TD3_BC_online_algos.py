@@ -15,7 +15,7 @@ from Network.Actor_Critic_net import Actor_deterministic, Double_Critic
 import matplotlib.pyplot as plt
 
 
-class TD3_BC:
+class TD3_BC_online:
     def __init__(self,
                  env_name,
                  num_hidden=256,
@@ -29,7 +29,7 @@ class TD3_BC:
                  ratio=10,
                  device='cpu'):
 
-        super(TD3_BC, self).__init__()
+        super(TD3_BC_online, self).__init__()
         # prepare the environment
         self.env = gym.make(env_name)
         num_state = self.env.observation_space.shape[0]
@@ -86,17 +86,21 @@ class TD3_BC:
 
             # update Critic
             critic_loss_pi = self.train_Q_pi(state, action, next_state, reward, not_done)
+            critic_loss_miu = self.train_Q_miu(state, action, next_state, next_action, reward, not_done)
 
             # delayed policy update
             if self.total_it % self.policy_freq == 0:
-                actor_loss, bc_loss, Q_pi_mean = self.train_actor(state, action)
+                actor_loss, bc_loss, Q_pi_mean, Q_miu_mean = self.train_actor(state, action)
+                actor_loss, Q_pi_explore, Q_miu_explore = self.train_explorer(state, action)
 
                 if self.total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
                     wandb.log({"actor_loss": actor_loss,
                                "bc_loss": bc_loss,
                                "Q_pi_loss": critic_loss_pi,
+                               "Q_miu_loss": critic_loss_miu,
                                "Q_pi_mean": Q_pi_mean,
+                               "Q_miu_mean": Q_miu_mean,
                                "evaluate_rewards": evaluate_reward,
                                "it_steps": self.total_it
                                })
@@ -128,29 +132,29 @@ class TD3_BC:
         self.critic_optim.step()
         return critic_loss.cpu().detach().numpy().item()
 
-    # def train_Q_miu(self, state, action, next_state, next_action, reward, not_done):
-    #     with torch.no_grad():
-    #         # Compute the target Q value
-    #         target_Q1, target_Q2 = self.critic_target_miu(next_state, next_action)
-    #         target_Q = torch.min(target_Q1, target_Q2)
-    #         target_Q = reward + not_done * self.gamma * target_Q
-    #
-    #     Q1, Q2 = self.critic_net_miu(state, action)
-    #
-    #     # Critic loss
-    #     critic_loss = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q)
-    #
-    #     # Optimize Critic
-    #     self.critic_miu_optim.zero_grad()
-    #     critic_loss.backward()
-    #     self.critic_miu_optim.step()
-    #     return critic_loss.cpu().detach().numpy().item()
+    def train_Q_miu(self, state, action, next_state, next_action, reward, not_done):
+        with torch.no_grad():
+            # Compute the target Q value
+            target_Q1, target_Q2 = self.critic_target_miu(next_state, next_action)
+            target_Q = torch.min(target_Q1, target_Q2)
+            target_Q = reward + not_done * self.gamma * target_Q
+
+        Q1, Q2 = self.critic_net_miu(state, action)
+
+        # Critic loss
+        critic_loss = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q)
+
+        # Optimize Critic
+        self.critic_miu_optim.zero_grad()
+        critic_loss.backward()
+        self.critic_miu_optim.step()
+        return critic_loss.cpu().detach().numpy().item()
 
     def train_actor(self, state, action):
         # Actor loss
         action_pi = self.actor_net(state)
         Q_pi = self.critic_net.Q1(state, action_pi)
-        # Q_miu = self.critic_net_miu.Q1(state, action_pi)
+        Q_miu = self.critic_net_miu.Q1(state, action_pi)
 
         lmbda = self.alpha / Q_pi.abs().mean().detach()
 
@@ -167,56 +171,60 @@ class TD3_BC:
         for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        # for param, target_param in zip(self.critic_net_miu.parameters(), self.critic_target_miu.parameters()):
-        #     target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        for param, target_param in zip(self.critic_net_miu.parameters(), self.critic_target_miu.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
         for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
         return actor_loss.cpu().detach().numpy().item(), \
                bc_loss.cpu().detach().numpy().item(), \
-               Q_pi.mean().cpu().detach().numpy().item()
-               # Q_miu.mean().cpu().detach().numpy().item()
+               Q_pi.mean().cpu().detach().numpy().item(), \
+               Q_miu.mean().cpu().detach().numpy().item()
 
-    # def train_explorer(self, state, action):
-    #     action_explore = self.actor_explore(state)
-    #     Q_pi = self.critic_net.Q1(state, action_explore)
-    #     Q_miu = self.critic_net_miu.Q1(state, action_explore)
-    #
-    #     Q_explore = Q_pi + (Q_pi - Q_miu) * 0.2
-    #     lmbda = self.alpha / Q_explore.abs().mean()
-    #
-    #     bc_loss = nn.MSELoss()(action, action_explore)
-    #     exploration_loss = -lmbda * Q_explore.mean() + bc_loss
-    #
-    #     # Optimize explorer
-    #     self.actor_explore_optim.zero_grad()
-    #     exploration_loss.backward()
-    #     self.actor_explore_optim.step()
-    #
-    #     return exploration_loss.cpu().detach().numpy().item(), \
-    #            Q_pi.mean().cpu().detach().numpy().item(), \
-    #            Q_miu.mean().cpu().detach().numpy().item()
+    def train_explorer(self, state, action):
+        action_explore = self.actor_explore(state)
+        Q_pi = self.critic_net.Q1(state, action_explore)
+        Q_miu = self.critic_net_miu.Q1(state, action_explore)
 
-    # def online_exploration(self, exploration_step=int(1e+5)):
-    #     state = self.env.reset()
-    #     for i in range(exploration_step):
-    #         state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
-    #         action = self.actor_net(state_norm).cpu().detach().numpy()
-    #         next_state, reward, done, _ = self.env.step(action)
-    #
-    #         state = state.squeeze()
-    #         action = action.squeeze()
-    #         next_state = next_state.squeeze()
-    #
-    #         # add online sample to replay buffer
-    #         self.replay_buffer.add_data_to_buffer(state, action, reward, done)
-    #         state = next_state
-    #         if done:
-    #             state = self.env.reset()
-    #
-    #     self.dataset = self.replay_buffer.cat_new_dataset(self.dataset)
-    #     self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
+        Q_explore = Q_pi + (Q_pi - Q_miu) * 0.2
+        lmbda = self.alpha / Q_explore.abs().mean()
+
+        bc_loss = nn.MSELoss()(action, action_explore)
+        exploration_loss = -lmbda * Q_explore.mean() + bc_loss
+
+        # Optimize explorer
+        self.actor_explore_optim.zero_grad()
+        exploration_loss.backward()
+        self.actor_explore_optim.step()
+
+        return exploration_loss.cpu().detach().numpy().item(), \
+               Q_pi.mean().cpu().detach().numpy().item(), \
+               Q_miu.mean().cpu().detach().numpy().item()
+
+    def online_exploration(self, exploration_step=int(1e+5)):
+        state = self.env.reset()
+        ep_rewards = 0
+        for i in range(exploration_step):
+            state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
+            action = self.actor_net(state_norm).cpu().detach().numpy()
+            next_state, reward, done, _ = self.env.step(action)
+
+            state = state.squeeze()
+            action = action.squeeze()
+            next_state = next_state.squeeze()
+
+            # add online sample to replay buffer
+            self.replay_buffer.add_data_to_buffer(state, action, reward, done)
+            ep_rewards += reward
+            state = next_state
+            if done:
+                state = self.env.reset()
+                wandb.log({"exploration_rewards": ep_rewards})
+                ep_rewards = 0
+
+        self.dataset = self.replay_buffer.cat_new_dataset(self.dataset)
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
 
     def rollout_evaluate(self):
         ep_rews = 0.
@@ -237,5 +245,10 @@ class TD3_BC:
 
     def load_parameters(self):
         self.critic_net_miu.load_state_dict(torch.load(self.file_loc[0]))
+        self.critic_target_miu.load_state_dict(torch.load(self.file_loc[0]))
+
         self.critic_net.load_state_dict(torch.load(self.file_loc[2]))
+        self.critic_target.load_state_dict(torch.load(self.file_loc[2]))
+
         self.actor_net.load_state_dict(torch.load(self.file_loc[3]))
+        self.actor_target.load_state_dict(torch.load(self.file_loc[3]))
