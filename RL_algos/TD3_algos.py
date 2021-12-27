@@ -52,7 +52,7 @@ class TD3:
         self.explore_freq = explore_freq
         self.start_steps = start_steps
         self.noise_clip = noise_clip
-        self.evaluate_freq = 10000
+        self.evaluate_freq = 3000
         self.batch_size = 256
         self.device = device
         self.max_action = 1.
@@ -96,17 +96,17 @@ class TD3:
                 if self.total_it % self.policy_freq == 0:
                     Q_mean = self.train_actor(s_train)
 
-                    wandb.log({"Q_loss": critic_loss,
-                               "Q_mean/-Actor_loss": Q_mean,
-                               "steps": t
-                               })
+                    if self.total_it % self.evaluate_freq == 0:
+                        ep_rews = self.rollout_evaluate()
+                        wandb.log({"Q_loss": critic_loss,
+                                   "Q_mean/-Actor_loss": Q_mean,
+                                   "steps": t,
+                                   "episode_rewards": ep_rews
+                                   })
 
             if done:
                 state, done = self.env.reset(), False
                 episode_timesteps = 0
-
-            if t % self.evaluate_freq == 0:
-                self.rollout_evaluate()
 
     def train_Q_pi(self, state, action, next_state, reward, not_done):
         with torch.no_grad():
@@ -168,5 +168,4 @@ class TD3:
             ep_rews += reward
             if done:
                 break
-        wandb.log({"pi_episode_reward": ep_rews,
-                   })
+        return ep_rews
