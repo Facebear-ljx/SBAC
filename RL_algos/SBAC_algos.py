@@ -69,6 +69,7 @@ class SBAC:
         """
         super(SBAC, self).__init__()
         # prepare the env and dataset
+        self.env_name = env_name
         self.env = gym.make(env_name)
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
@@ -288,6 +289,7 @@ class SBAC:
                 ep_rews += reward
                 if done:
                     break
+        ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100
         return ep_rews
 
     def save_parameters(self):

@@ -39,6 +39,7 @@ class TD3_BC:
         """
         super(TD3_BC, self).__init__()
         # prepare the environment
+        self.env_name = env_name
         self.env = gym.make(env_name)
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
@@ -178,6 +179,7 @@ class TD3_BC:
             ep_rews += reward
             if done:
                 break
+        ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100
         return ep_rews
 
     def save_parameters(self):
