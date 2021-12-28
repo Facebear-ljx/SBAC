@@ -14,15 +14,15 @@ def main():
     wandb.config.update(args)
 
     # env_name = args.env_name
-    env_name = "hopper-medium-replay-v2"
+    env_name = "hopper-medium-v2"
     agent_TD3_BC_online = TD3_BC_online(env_name=env_name,
                                         device=args.device,
                                         ratio=1
                                         )
     agent_TD3_BC_online.load_parameters()
     # for _ in range(100):
-    # agent_TD3_BC_online.learn(total_time_step=int(3e+5))
-    agent_TD3_BC_online.online_exploration(exploration_step=int(1e+5))
+    # agent_TD3_BC_online.learn(total_time_step=int(1e+6))
+    agent_TD3_BC_online.online_exploration(exploration_step=int(1e+6))
     agent_TD3_BC_online.learn(total_time_step=3e+5)
 
 

@@ -12,6 +12,8 @@ class ReplayBuffer(object):
         self.next_state = np.zeros((max_size, state_dim))
         self.next_action = np.zeros((max_size, action_dim))
         self.reward = np.zeros((max_size, 1))
+        self.next_reward = np.zeros((max_size, 1))
+        self.nn_reward = np.zeros((max_size, 1))
         self.not_done = np.zeros((max_size, 1))
 
         self.state_buffer = []
@@ -71,7 +73,19 @@ class ReplayBuffer(object):
 
     # Offline and Online sample data from replay buffer function
     def sample(self, batch_size):
-        ind = np.random.randint(0, self.size, size=batch_size)    ###################################
+        ind = np.random.randint(0, self.size, size=batch_size)  ###################################
+
+        return (
+            torch.FloatTensor(self.state[ind]).to(self.device),
+            torch.FloatTensor(self.action[ind]).to(self.device),
+            torch.FloatTensor(self.next_state[ind]).to(self.device),  ####################################
+            torch.FloatTensor(self.next_action[ind]).to(self.device),
+            torch.FloatTensor(self.reward[ind]).to(self.device),
+            torch.FloatTensor(self.not_done[ind]).to(self.device)
+        )
+
+    def sample_lambda(self, batch_size):
+        ind = np.random.randint(0, self.size, size=batch_size)  ###################################
 
         return (
             torch.FloatTensor(self.state[ind]).to(self.device),
@@ -179,6 +193,70 @@ class ReplayBuffer(object):
         self.next_action = dataset['actions'][nonterminal_steps + 1]
         self.reward = dataset['rewards'][nonterminal_steps].reshape(-1, 1)
         self.not_done = 1. - dataset['terminals'][nonterminal_steps + 1].reshape(-1, 1)
+        self.size = self.state.shape[0]
+
+        # min_max normalization
+        if scale_rewards:
+            r_max = np.max(self.reward)
+            r_min = np.min(self.reward)
+            self.reward = (self.reward - r_min) / (r_max - r_min)
+
+        s_mean = self.state.mean(0, keepdims=True)
+        s_std = self.state.std(0, keepdims=True)
+
+        # standard normalization
+        if scale_state:
+            self.state = (self.state - s_mean) / (s_std + 1e-3)
+            self.next_state = (self.next_state - s_mean) / (s_std + 1e-3)
+
+        return s_mean, s_std
+
+    def convert_D4RL_td_lambda(self, dataset, scale_rewards=False, scale_state=False, n=2):
+        """
+        convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
+        :param n: TD error skip steps
+        :param dataset: d4rl dataset, usually comes from env.get_dataset or replay_buffer.split_dataset
+        :param scale_rewards: whether scale the reward to [0, 1]
+        :param scale_state: whether scale the state to standard gaussian distribution ~ N(0, 1)
+        :return: the mean and standard deviation of states
+        """
+
+        dataset_size = len(dataset['observations'])
+        dataset['terminals'] = np.squeeze(dataset['terminals'])
+        dataset['rewards'] = np.squeeze(dataset['rewards'])
+
+        aa = np.logical_not(dataset['terminals'])
+        bb = np.arange(dataset_size) < dataset_size - n
+
+        if n == 1:
+            aa = aa
+        elif n == 2:
+            for i in range(len(aa) - 1):
+                if not aa[i + 1]:
+                    aa[i] = False
+        elif n == 3:
+            for i in range(len(aa) - 2):
+                if not aa[i + 2]:
+                    aa[i] = False
+                    aa[i + 1] = False
+        elif n == 4:
+            for i in range(len(aa) - 3):
+                if not aa[i + 3]:
+                    aa[i] = False
+                    aa[i + 1] = False
+                    aa[i + 2] = False
+        else:
+            print("n too large!!!!!!!!!!!!!!!!!!!!!! need 1,2,3,4")
+        nonterminal_steps, = np.where(np.logical_and(aa, bb))
+        print('Found %d non-terminal steps out of a total of %d steps.' % (
+            len(nonterminal_steps), dataset_size))
+
+        self.state = dataset['observations'][nonterminal_steps]
+        self.action = dataset['actions'][nonterminal_steps]
+        self.next_state = dataset['observations'][nonterminal_steps + n]
+        self.next_action = dataset['actions'][nonterminal_steps + n]
+        self.reward = dataset['rewards'][nonterminal_steps].reshape(-1, 1)
+        self.not_done = 1. - dataset['terminals'][nonterminal_steps + n].reshape(-1, 1)  #########
         self.size = self.state.shape[0]
 
         # min_max normalization

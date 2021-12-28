@@ -30,6 +30,8 @@ class TD3_BC_online:
                  device='cpu'):
 
         super(TD3_BC_online, self).__init__()
+        algos_name = 'TD3_BC_online'
+
         # prepare the environment
         self.env = gym.make(env_name)
         num_state = self.env.observation_space.shape[0]
@@ -91,17 +93,21 @@ class TD3_BC_online:
             # delayed policy update
             if self.total_it % self.policy_freq == 0:
                 actor_loss, bc_loss, Q_pi_mean, Q_miu_mean = self.train_actor(state, action)
-                actor_loss, Q_pi_explore, Q_miu_explore = self.train_explorer(state, action)
+                explore_loss, Q_pi_explore, Q_miu_explore = self.train_explorer(state, action)
 
                 if self.total_it % self.evaluate_freq == 0:
-                    evaluate_reward = self.rollout_evaluate()
+                    evaluate_reward = self.rollout_evaluate(True)
+                    explore_reward = self.rollout_evaluate(False)
                     wandb.log({"actor_loss": actor_loss,
                                "bc_loss": bc_loss,
                                "Q_pi_loss": critic_loss_pi,
                                "Q_miu_loss": critic_loss_miu,
                                "Q_pi_mean": Q_pi_mean,
                                "Q_miu_mean": Q_miu_mean,
+                               "Q_pi_explore": Q_pi_explore,
+                               "Q_miu_explore": Q_miu_explore,
                                "evaluate_rewards": evaluate_reward,
+                               "explore_rewards": explore_reward,
                                "it_steps": self.total_it
                                })
 
@@ -187,8 +193,8 @@ class TD3_BC_online:
         Q_pi = self.critic_net.Q1(state, action_explore)
         Q_miu = self.critic_net_miu.Q1(state, action_explore)
 
-        Q_explore = Q_pi + (Q_pi - Q_miu) * 0.2
-        lmbda = self.alpha / Q_explore.abs().mean()
+        Q_explore = Q_pi + (Q_pi - Q_miu) * 100
+        lmbda = 10. / Q_explore.abs().mean()
 
         bc_loss = nn.MSELoss()(action, action_explore)
         exploration_loss = -lmbda * Q_explore.mean() + bc_loss
@@ -203,11 +209,11 @@ class TD3_BC_online:
                Q_miu.mean().cpu().detach().numpy().item()
 
     def online_exploration(self, exploration_step=int(1e+5)):
-        state = self.env.reset()
         ep_rewards = 0
-        for i in range(exploration_step):
+        state = self.env.reset()
+        for _ in range(exploration_step):
             state_norm = (state - self.s_mean) / (self.s_std + 1e-5)
-            action = self.actor_net(state_norm).cpu().detach().numpy()
+            action = self.actor_explore(state_norm).cpu().detach().numpy()
             next_state, reward, done, _ = self.env.step(action)
 
             state = state.squeeze()
@@ -226,12 +232,15 @@ class TD3_BC_online:
         self.dataset = self.replay_buffer.cat_new_dataset(self.dataset)
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
 
-    def rollout_evaluate(self):
+    def rollout_evaluate(self, evaluate=True):
         ep_rews = 0.
         state = self.env.reset()
         while True:
             state = (state - self.s_mean) / (self.s_std + 1e-5)
-            action = self.actor_net(state).cpu().detach().numpy()
+            if evaluate:
+                action = self.actor_net(state).cpu().detach().numpy()
+            else:
+                action = self.actor_explore(state).cpu().detach().numpy()
             state, reward, done, _ = self.env.step(action)
             ep_rews += reward
             if done:
@@ -242,6 +251,7 @@ class TD3_BC_online:
         torch.save(self.critic_net_miu.state_dict(), self.file_loc[0])
         torch.save(self.critic_net.state_dict(), self.file_loc[2])
         torch.save(self.actor_net.state_dict(), self.file_loc[3])
+        torch.save(self.actor_explore.state_dict(), 'explore.pth')
 
     def load_parameters(self):
         self.critic_net_miu.load_state_dict(torch.load(self.file_loc[0]))
@@ -252,3 +262,5 @@ class TD3_BC_online:
 
         self.actor_net.load_state_dict(torch.load(self.file_loc[3]))
         self.actor_target.load_state_dict(torch.load(self.file_loc[3]))
+
+        self.actor_explore.load_state_dict(torch.load('explore.pth'))
