@@ -19,9 +19,9 @@ def main():
     current_time = datetime.datetime.now()
 
     # setup mujoco environment and SBAC agent
-    env_name = "walker2d-medium-replay-v2"
+    # env_name = "walker2d-medium-replay-v2"
 
-    # env_name = args.env_name
+    env_name = args.env_name
     wandb.run.name = f"{args.skip_steps}_{env_name}_{current_time}"
     agent_TD3_BC_lambda = TD3_BC_td_lambda(env_name=env_name,
                                            device=args.device,
