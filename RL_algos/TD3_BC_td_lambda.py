@@ -76,7 +76,7 @@ class TD3_BC_td_lambda:
         self.total_it = 0
 
         # Q and Critic file location
-        self.file_loc = prepare_env(env_name)
+        # self.file_loc = prepare_env(env_name)
 
     def learn(self, total_time_step=1e+5):
         """
@@ -107,8 +107,8 @@ class TD3_BC_td_lambda:
                                "it_steps": self.total_it
                                })
 
-            if self.total_it % 100000 == 0:
-                self.save_parameters()
+            # if self.total_it % 100000 == 0:
+                # self.save_parameters()
 
         self.total_it = 0
 
@@ -179,16 +179,17 @@ class TD3_BC_td_lambda:
             state = state.squeeze()
             action = self.actor_net(state).cpu().detach().numpy()
             state, reward, done, _ = self.env.step(action)
+            self.env.render()
             ep_rews += reward
             if done:
                 break
         ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100
         return ep_rews
 
-    def save_parameters(self):
-        torch.save(self.critic_net.state_dict(), self.file_loc[2])
-        torch.save(self.actor_net.state_dict(), self.file_loc[3])
-
-    def load_parameters(self):
-        self.critic_net.load_state_dict(torch.load(self.file_loc[2]))
-        self.actor_net.load_state_dict(torch.load(self.file_loc[3]))
+    # def save_parameters(self):
+    #     torch.save(self.critic_net.state_dict(), self.file_loc[2])
+    #     torch.save(self.actor_net.state_dict(), self.file_loc[3])
+    #
+    # def load_parameters(self):
+    #     self.critic_net.load_state_dict(torch.load(self.file_loc[2]))
+    #     self.actor_net.load_state_dict(torch.load(self.file_loc[3]))
