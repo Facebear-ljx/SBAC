@@ -8,3 +8,4 @@ statics/
 wandb/PPT
 PPT/
 MUJOCO_LOG.TXT
+d3rlpy_logs

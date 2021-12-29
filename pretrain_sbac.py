@@ -1,6 +1,7 @@
 import wandb
 import argparse
 from RL_algos.SBAC_algos import SBAC
+import datetime
 
 
 def main():
@@ -22,9 +23,12 @@ def main():
     args = parser.parse_args()
     wandb.config.update(args)
 
+    current_time = datetime.datetime.now()
     # setup mujoco environment and SBAC agent
     env_name = args.env_name
-    # env_name = 'hopper-medium-v2'
+    # env_name = 'pen-human-v0'
+
+    wandb.run.name = f"{env_name}_{current_time}"
     agent_SBAC = SBAC(env_name=env_name,
                       num_hidden=args.num_hidden,
                       lr_actor=args.lr_actor,

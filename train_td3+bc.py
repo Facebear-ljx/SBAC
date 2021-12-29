@@ -1,6 +1,7 @@
 import wandb
 import argparse
 from RL_algos.TD3_BC_algos import TD3_BC
+import datetime
 
 
 def main():
@@ -15,6 +16,9 @@ def main():
 
     # setup mujoco environment and SBAC agent
     env_name = args.env_name
+    current_time = datetime.datetime.now()
+    wandb.run.name = f"{env_name}_{current_time}"
+
     agent_TD3_BC = TD3_BC(env_name=env_name,
                           device=args.device,
                           ratio=1

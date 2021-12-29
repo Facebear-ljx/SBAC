@@ -76,7 +76,7 @@ class SBAC:
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
-                                                                  scale_rewards=False, scale_state=True)
+                                                                  scale_rewards=True, scale_state=True)
 
         # hyper-parameters
         self.lr_actor = lr_actor
@@ -193,8 +193,8 @@ class SBAC:
                            "q_miu_loss": q_miu_loss,
                            "q_miu_mean": q_miu_mean,
                            "log_miu": log_miu.mean().item(),
-                           "reward": reward.mean().item(),
-                           "it_steps": i_so_far
+                           "it_steps": i_so_far,
+                           "alpha": self.alpha.item()
                            })
 
     def build_w_loss(self, s1, a1, s2):
@@ -249,9 +249,7 @@ class SBAC:
         """
         train the Q function of the behavior policy: \miu
         """
-        next_s_miu = next_s - self.s_mean
-        next_s_miu /= (self.s_std + 1e-5)
-        next_action_miu = self.bc_standard_net.get_action(next_s_miu)
+        next_action_miu = self.bc_standard_net.get_action(next_s)
 
         target_q = r + not_done * self.target_q_net(next_s, next_action_miu).detach() * self.gamma
         loss_q = nn.MSELoss()(target_q, self.q_net(s, a))
@@ -281,10 +279,14 @@ class SBAC:
             while True:
                 ep_t += 1
                 if pi == 'pi':
+                    state = (state - self.s_mean) / (self.s_std + 1e-5)
+                    state = state.squeeze()
                     action = self.actor_net.get_action(state).cpu().detach().numpy()
                 else:
                     state = (state - self.s_mean) / (self.s_std + 1e-5)
+                    state = state.squeeze()
                     action = self.bc_standard_net.get_action(np.expand_dims(state, 0)).cpu().detach().numpy()
+                    action = action.squeeze()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward
                 if done:

@@ -1,5 +1,7 @@
 import wandb
 import argparse
+import d4rl
+import datetime
 from RL_algos.TD3_algos import TD3
 
 
@@ -14,7 +16,9 @@ def main():
     args = parser.parse_args()
     wandb.config.update(args)
 
-    env_name = "Hopper-v2"
+    current_time = datetime.datetime.now()
+    env_name = "door-human-v0"
+    wandb.run.name = f"{env_name}_{current_time}"
     agent_TD3 = TD3(env_name=env_name,
                     device=args.device,
                     start_steps=args.start_steps

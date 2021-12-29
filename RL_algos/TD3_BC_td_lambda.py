@@ -176,6 +176,7 @@ class TD3_BC_td_lambda:
         state = self.env.reset()
         while True:
             state = (state - self.s_mean) / (self.s_std + 1e-5)
+            state = state.squeeze()
             action = self.actor_net(state).cpu().detach().numpy()
             state, reward, done, _ = self.env.step(action)
             ep_rews += reward

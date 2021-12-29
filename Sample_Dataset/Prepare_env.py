@@ -10,6 +10,27 @@ ANT_EXPERT_SCORE = 3879.7
 
 
 def prepare_env(env_name):
+    if env_name == 'door-human-v0':
+        q_file_location = 'Model/door/door-human-v0/door-human-v0_q.pth'
+        bc_file_location = 'Model/door/door-human-v0/door-human-v0_bc_standard.pth'
+        q_pi_file_location = 'Model/door/door-human-v0/door-human-v0_q_pi.pth'
+        actor_file_location = 'Model/door/door-human-v0/door-human-v0_actor.pth'
+        env_name_ = 'door'
+
+    if env_name == 'pen-human-v0':
+        q_file_location = 'Model/pen/pen-human-v0/pen-human-v0_q.pth'
+        bc_file_location = 'Model/pen/pen-human-v0/pen-human-v0_bc_standard.pth'
+        q_pi_file_location = 'Model/pen/pen-human-v0/pen-human-v0_q_pi.pth'
+        actor_file_location = 'Model/pen/pen-human-v0/pen-human-v0_actor.pth'
+        env_name_ = 'pen'
+
+    if env_name == 'hammer-human-v0':
+        q_file_location = 'Model/hammer/hammer-human-v0/hammer-human-v0_q.pth'
+        bc_file_location = 'Model/hammer/hammer-human-v0/hammer-human-v0_bc_standard.pth'
+        q_pi_file_location = 'Model/hammer/hammer-human-v0/hammer-human-v0_q_pi.pth'
+        actor_file_location = 'Model/hammer/hammer-human-v0/hammer-human-v0_actor.pth'
+        env_name_ = 'hammer'
+
     # Hopper
     if env_name == 'hopper-random-v2':
         q_file_location = 'Model/hopper/hopper_random/hopper_random_v2_q.pth'
