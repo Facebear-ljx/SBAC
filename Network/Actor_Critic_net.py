@@ -7,7 +7,7 @@ from torch.distributions import MultivariateNormal, Normal
 MEAN_MIN = -9.0
 MEAN_MAX = 9.0
 LOG_STD_MIN = -5
-LOG_STD_MAX = 2
+LOG_STD_MAX = 10
 EPS = 1e-7
 
 
@@ -86,6 +86,7 @@ class BC_standard(nn.Module):
 class BC_VAE(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, num_latent, device):
         super(BC_VAE, self).__init__()
+        self.latent_dim = num_latent
         self.device = device
         # encode
         self.fc1 = nn.Linear(num_state + num_action, num_hidden)
@@ -96,29 +97,32 @@ class BC_VAE(nn.Module):
         # decode
         self.fc4 = nn.Linear(num_latent + num_state, num_hidden)
         self.fc5 = nn.Linear(num_hidden, num_hidden)
-        self.fc6 = nn.Linear(num_hidden, num_action)
-        self.fc7 = nn.Linear(num_hidden, num_action)
+        self.action = nn.Linear(num_hidden, num_action)
 
     def encode(self, state, action):
         x = torch.cat([state, action], dim=1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mean = self.mean(x)
-        log_var = self.sigma(x)
-        return mean, log_var
+        log_sigma = self.sigma(x).clamp(LOG_STD_MIN, LOG_STD_MAX)
+        return mean, log_sigma
 
-    def reparameterize(self, mu, log_var):
-        std = torch.exp(log_var / 2)
+    def reparameterize(self, mu, log_sigma):
+        std = torch.exp(log_sigma)
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def decode(self, z, state):
+    def decode(self, state, z=None):
+        # When sampling from the VAE, the latent vector is clipped to [-0.5, 0.5], copy from BCQ's implementation
+        # https://github.com/sfujim/BCQ/blob/master/continuous_BCQ/BCQ.py
+        if z is None:
+            z = torch.randn((state.shape[0], self.latent_dim)).to(self.device).clamp(-0.5, 0.5)
         x = torch.cat([z, state], dim=1)
         x = F.relu(self.fc4(x))
         x = F.relu(self.fc5(x))
-        mean = self.fc6(x)
-        sigma = F.softplus(self.fc7(x))
-        return mean, sigma
+        action_recon = self.action(x)
+        action_recon = torch.tanh(action_recon)
+        return action_recon
 
     def forward(self, state, action):
         if isinstance(state, np.ndarray):
@@ -128,8 +132,8 @@ class BC_VAE(nn.Module):
 
         mean, sigma = self.encode(state, action)
         latent_pi = self.reparameterize(mean, sigma)
-        action_mean, action_sigma = self.decode(latent_pi, state)
-        return action_mean, action_sigma, mean, sigma
+        action_recon = self.decode(state, latent_pi)
+        return action_recon, mean, sigma
 
 
 class Actor(nn.Module):

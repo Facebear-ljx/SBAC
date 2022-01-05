@@ -179,7 +179,7 @@ class TD3_BC_td_lambda:
             state = state.squeeze()
             action = self.actor_net(state).cpu().detach().numpy()
             state, reward, done, _ = self.env.step(action)
-            self.env.render()
+            # self.env.render()
             ep_rews += reward
             if done:
                 break

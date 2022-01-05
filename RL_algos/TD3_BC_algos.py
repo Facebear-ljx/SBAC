@@ -20,7 +20,7 @@ class TD3_BC:
                  noise_clip=0.5,
                  policy_freq=2,
                  alpha=2.5,
-                 ratio=10,
+                 ratio=1,
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)

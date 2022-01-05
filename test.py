@@ -1,16 +1,18 @@
-import d4rl
-import gym
-import mujoco_py
+import d3rlpy
 
-import gym
+# prepare dataset
+dataset, env = d3rlpy.datasets.get_d4rl('walker2d-expert-v0')
 
-env = gym.make("door-v0")
-observation = env.reset()
-while True:
-    action = env.action_space.sample()  # your agent here (this takes random actions)
-    observation, reward, done, info = env.step(action)
-    env.render()
+# prepare algorithm
+cql = d3rlpy.algos.CQL(use_gpu=True)
 
-    # if done:
-    # observation = env.reset()
-env.close()
+# train
+cql.fit(dataset,
+        eval_episodes=dataset,
+        n_epochs=300,
+        scorers={
+            'environment': d3rlpy.metrics.evaluate_on_environment(env),
+            'td_error': d3rlpy.metrics.td_error_scorer,
+        },
+        tensorboard_dir='CQL'
+        )
