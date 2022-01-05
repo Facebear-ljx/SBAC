@@ -112,8 +112,8 @@ class BCQ:
                            "it_steps": self.total_it
                            })
 
-            if self.total_it % 100000 == 0:
-                self.save_parameters()
+            # if self.total_it % 100000 == 0:
+            #     self.save_parameters()
 
         self.total_it = 0
 
@@ -200,8 +200,10 @@ class BCQ:
         state = self.env.reset()
         while True:
             state = (state - self.s_mean) / (self.s_std + 1e-5)
-            action = self.actor_net(state).cpu().detach().numpy()
-            state, reward, done, _ = self.env.step(action)
+            perturbation = self.actor_net(state).cpu().detach().numpy()
+            action = self.vae.decode(state).cpu().detach().numpy()
+            perturbed_action = perturbation * self.phi + action
+            state, reward, done, _ = self.env.step(perturbed_action)
             ep_rews += reward
             if done:
                 break

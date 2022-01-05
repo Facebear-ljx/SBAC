@@ -115,8 +115,12 @@ class BC_VAE(nn.Module):
     def decode(self, state, z=None):
         # When sampling from the VAE, the latent vector is clipped to [-0.5, 0.5], copy from BCQ's implementation
         # https://github.com/sfujim/BCQ/blob/master/continuous_BCQ/BCQ.py
+
+        if isinstance(state, np.ndarray):
+            state = torch.tensor(state, dtype=torch.float).to(self.device)
         if z is None:
             z = torch.randn((state.shape[0], self.latent_dim)).to(self.device).clamp(-0.5, 0.5)
+
         x = torch.cat([z, state], dim=1)
         x = F.relu(self.fc4(x))
         x = F.relu(self.fc5(x))
