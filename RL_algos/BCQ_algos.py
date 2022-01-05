@@ -16,12 +16,10 @@ class BCQ:
                  num_hidden=256,
                  gamma=0.99,
                  tau=0.005,
-                 policy_noise=0.2,
-                 noise_clip=0.5,
-                 policy_freq=2,
                  phi=0.05,
                  ratio=1,
                  lmbda=0.75,
+                 skip_steps=1,
                  device='cpu'):
         """
         Facebear's implementation of BCQ (Off-Policy Deep Reinforcement Learning without Exploration)
@@ -30,13 +28,11 @@ class BCQ:
         :param env_name: your gym environment name
         :param num_hidden: the number of the units of the hidden layer of your network
         :param gamma: discounting factor of the cumulated reward
-        :param tau: soft update
-        :param policy_noise:
-        :param noise_clip:
-        :param policy_freq: delayed policy update frequency
-        :param alpha: the hyper-parameter in equation
-        :param ratio:
-        :param device:
+        :param tau: soft target network update
+        :param phi: the noise's (Actor network's output) scale
+        :param ratio: split the dataset into "ratio" numbers
+        :param lmbda: the soft target critic computation hyper-parameters
+        :param device: 'cuda' or 'cpu'
         """
         super(BCQ, self).__init__()
         # prepare the environment
@@ -50,7 +46,7 @@ class BCQ:
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio)
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL_td_lambda(self.dataset, scale_rewards=False, scale_state=True, n=skip_steps)
 
         # prepare the actor and critic
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
@@ -67,10 +63,7 @@ class BCQ:
         # hyper-parameters
         self.gamma = gamma
         self.tau = tau
-        self.policy_noise = policy_noise
-        self.policy_freq = policy_freq
         self.evaluate_freq = 3000
-        self.noise_clip = noise_clip
         self.phi = phi
         self.lmbda = lmbda
         self.batch_size = 256
@@ -134,20 +127,19 @@ class BCQ:
     def train_Q_pi(self, state, action, next_state, reward, not_done):
         """
         train the Q function of the learned policy: \pi
-        most of the code refer to BCQ' s implementation
+        most of the code refer to Fujimoto' s implementation
         https://github.com/sfujim/BCQ/blob/master/continuous_BCQ/BCQ.py
         """
         with torch.no_grad():
             # Duplicate next state 10 times
             next_state = torch.repeat_interleave(next_state, 10, 0)
 
-            # Compute value of perturbed actions sampled from the VAE
+            # the action is composed of two different parts : perturbation(Actor) and Conditional-VAE(vae)
             next_action = self.actor_target(next_state) * self.phi + self.vae.decode(next_state)
             target_Q1, target_Q2 = self.critic_target(next_state, next_action)
 
             # Soft Clipped Double Q-learning
-            target_Q = self.lmbda * torch.min(target_Q1, target_Q2) + (1. - self.lmbda) * torch.max(target_Q1,
-                                                                                                    target_Q2)
+            target_Q = self.lmbda * torch.min(target_Q1, target_Q2) + (1. - self.lmbda) * torch.max(target_Q1, target_Q2)
 
             # Take max over each action sampled from the VAE
             target_Q = target_Q.reshape(self.batch_size, -1).max(1)[0].reshape(-1, 1)
@@ -168,7 +160,7 @@ class BCQ:
         """
         train the learned policy
         """
-        # Perturbation Action
+        # the action is composed of two different parts : perturbation and Conditional-VAE
         sampled_actions = self.vae.decode(state)
         perturbation = self.actor_net(state)
         perturbed_actions = perturbation * self.phi + sampled_actions
@@ -200,9 +192,12 @@ class BCQ:
         state = self.env.reset()
         while True:
             state = (state - self.s_mean) / (self.s_std + 1e-5)
+
+            # the action is composed of two different parts : perturbation and Conditional-VAE
             perturbation = self.actor_net(state).cpu().detach().numpy()
             action = self.vae.decode(state).cpu().detach().numpy()
             perturbed_action = perturbation * self.phi + action
+
             state, reward, done, _ = self.env.step(perturbed_action)
             ep_rews += reward
             if done:

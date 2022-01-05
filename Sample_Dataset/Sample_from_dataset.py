@@ -211,7 +211,7 @@ class ReplayBuffer(object):
 
         return s_mean, s_std
 
-    def convert_D4RL_td_lambda(self, dataset, scale_rewards=False, scale_state=False, n=2):
+    def convert_D4RL_td_lambda(self, dataset, scale_rewards=False, scale_state=False, n=1):
         """
         convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
         :param n: TD error skip steps

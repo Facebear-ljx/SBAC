@@ -25,7 +25,7 @@ def main():
     parser.add_argument('--auto_alpha', default=True, help='auto-update the hyper-parameter alpha (default: True)')
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
     parser.add_argument('--importance', default=False)
-    parser.add_argument('--env_name', help='choose your mujoco env')
+    parser.add_argument('--env_name', default='hopper-medium-v2', help='choose your mujoco env')
     args = parser.parse_args()
     wandb.config.update(args)
 
