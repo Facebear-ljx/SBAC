@@ -11,11 +11,11 @@ import os
 import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
-from Network.Actor_Critic_net import Actor, BC_VAE, Ensemble_Critic, Alpha, W
+from Network.Actor_Critic_net import Actor, BC_VAE, Ensemble_Critic
 
 ALPHA_MAX = 500.
 ALPHA_MIN = 0.2
-EPS = 1e-8
+thresh = 0.05
 
 
 # copy from kumar's implementation:
@@ -59,16 +59,21 @@ class BEAR:
     soft_update = 0.005
 
     def __init__(self, env_name,
-                 num_hidden,
-                 lr_actor=1e-5,
+                 num_hidden=400,
+                 lr_actor=3e-4,
                  lr_critic=1e-3,
                  gamma=0.99,
+                 tau=0.005,
+                 num_sample_batch=10,
                  warmup_steps=10000,
-                 alpha=0.2,
+                 alpha=100,
                  auto_alpha=True,
-                 epsilon=1,
                  batch_size=256,
+                 num_q=4,
                  lmbda=1,
+                 lagrange_thresh=10,
+                 delta_conf=0.1,
+                 kernel_type='laplacian',
                  device='cpu'):
         """
         Facebear's implementation of BEAR (Stabilizing Off-Policy Q-Learning via Bootstrapping error Reduction)
@@ -76,14 +81,12 @@ class BEAR:
 
         :param env_name: your gym environment name
         :param num_hidden: the number of the units of the hidden layer of your network
-        :param Use_W: whether use the importance sampling ratio to update the policy in equation(8)
         :param lr_actor: learning rate of the actor network
         :param lr_critic: learning rate of the critic network
         :param gamma: discounting factor of the cumulated reward
         :param warmup_steps: the steps of the training times of behavior cloning
-        :param alpha: the hyper-parameters in equation(8)
+        :param alpha: the hyper-parameters
         :param auto_alpha: whether auto update the alpha
-        :param epsilon: the constraint
         :param batch_size: sample batch size
         :param device: cuda or cpu
         """
@@ -107,37 +110,70 @@ class BEAR:
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optim = optim.Adam(self.actor.parameters(), lr_actor)
 
-        self.critic = Ensemble_Critic(num_state, num_action, num_hidden, num_q=4, device=device)
+        self.critic = Ensemble_Critic(num_state, num_action, num_hidden, 4, device).float().to(device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optim = optim.Adam(self.critic.parameters(), lr_critic)
 
         self.vae = BC_VAE(num_state, num_action, num_hidden, num_latent, device).float().to(device)
         self.vae_optim = optim.Adam(self.vae.parameters(), lr_actor)
 
-        self.file_loc = prepare_env(env_name)
-
-        if auto_alpha is True:
-            self.log_lagrange2 = torch.randn((), requires_grad=True, device=device)
-            self.lagrange2_optim = torch.optim.Adam([self.log_lagrange2, ], lr=1e-3)
-
         # hyper-parameters
         self.gamma = gamma
+        self.tau = tau
         self.batch_size = batch_size
         self.warmup_steps = warmup_steps
         self.auto_alpha = auto_alpha
         self.alpha = alpha
-        self.epsilon = epsilon
+        self.num_sample_batch = num_sample_batch
+        self.num_q = num_q
+        self.kernel_type = kernel_type
+        self.delta_conf = delta_conf
+        self.lagrange_thresh = lagrange_thresh
         self.device = device
+        self.file_loc = prepare_env(env_name)
         self.total_it = 0
 
-    def kl_loss(self, samples1, state):
-        """We just do likelihood, we make sure that the policy is close to the
-           data in terms of the KL."""
-        state_rep = state.unsqueeze(1).repeat(1, samples1.size(1), 1).view(-1, state.size(-1))
-        samples1_reshape = samples1.view(-1, samples1.size(-1))
-        samples1_log_pis = self.actor.log_pis(state=state_rep, raw_action=samples1_reshape)
-        samples1_log_prob = samples1_log_pis.view(state.size(0), samples1.size(1))
-        return (-samples1_log_prob).mean(1)
+        if auto_alpha is True:
+            self.lagrange = torch.randn((), requires_grad=True, device=device)
+            self.lagrange_optim = torch.optim.Adam([self.lagrange, ], lr=1e-3)
+
+    def learn(self, total_time_step=1e+6):
+        """
+        BEAR's learning framework
+        :param total_time_step: the total iteration times for training BEAR
+        :return: None
+        """
+        # train !
+        while self.total_it <= total_time_step:
+            self.total_it += 1
+
+            # sample data
+            state, action, next_state, next_action, reward, not_done = self.replay_buffer.sample(self.batch_size)
+
+            # train VAE
+            vae_loss = self.train_vae(state, action)
+
+            # train Critic
+            critic_loss = self.train_Q_pi(state, action, next_state, reward, not_done)
+
+            # train Actor
+            actor_loss = self.train_actor(state, self.num_sample_batch)
+
+            # Auto-update the lagrange multiplier
+            self.auto_update_lagrange(state, self.num_sample_batch)
+
+            # log_summary
+            if self.total_it % 3000 == 0:
+                pi_reward = self.rollout_evaluate(pi='pi')
+                miu_reward = self.rollout_evaluate(pi='miu')
+
+                wandb.log({"actor_loss": actor_loss,
+                           "vae_loss": vae_loss,
+                           "critic_loss": critic_loss,
+                           "pi_reward": pi_reward,
+                           "miu_reward": miu_reward,
+                           "it_steps": self.total_it,
+                           })
 
     def entropy_loss(self, samples1, state):
         state_rep = state.unsqueeze(1).repeat(1, samples1.size(1), 1).view(-1, state.size(-1))
@@ -156,70 +192,6 @@ class BEAR:
             q1 = self.critic.q1(state, action)
             ind = q1.max(0)[1]
         return action[ind].cpu().data.numpy().flatten()
-
-    def pretrain_bc_standard(self):
-        """
-        pretrain behavior cloning for self.warmup_steps and save the bc model parameters at self.file_loc
-        :return: None
-        """
-        for i in range(self.warmup_steps):
-            state, action, _, _, _, _ = self.replay_buffer.sample(self.batch_size)
-            bc_loss = self.train_bc_standard(s=state, a=action)
-            if i % 5000 == 0:
-                miu_reward = self.rollout_evaluate(pi='miu')
-                wandb.log({"bc_loss": bc_loss,
-                           "miu_reward": miu_reward
-                           })
-        torch.save(self.vae.state_dict(), self.file_loc[1])
-
-    def learn(self, total_time_step=1e+6):
-        """
-        BEAR's learning framework
-        :param total_time_step: the total iteration times for training BEAR
-        :return: None
-        """
-        # train !
-        while self.total_it <= total_time_step:
-            self.total_it += 1
-
-            # sample data
-            state, action, next_state, next_action, reward, not_done = self.replay_buffer.sample(self.batch_size)
-
-            # train VAE
-            vae_loss = self.train_vae(state, action)
-
-            # update Critic
-            critic_loss_pi = self.train_Q_pi(state, action, next_state, reward, not_done)
-
-            # Actor_standard, calculate the log(\miu)
-            action_pi = self.actor_net.get_action(state)
-            log_miu = self.bc_standard_net.get_log_density(state, action_pi)
-
-            A = self.q_net(state, action_pi)
-
-            if self.auto_alpha:
-                self.update_alpha(state, action_pi.detach(), log_miu.detach())
-                self.alpha = torch.mean(torch.clip(self.get_alpha(state, action_pi), ALPHA_MIN, ALPHA_MAX)).detach()
-
-            # policy update
-            actor_loss = torch.mean(-1. * A - self.alpha * log_miu)
-            self.actor_optim.zero_grad()
-            actor_loss.backward()
-            self.actor_optim.step()
-
-            # log_summary
-            if self.total_it % 3000 == 0:
-                pi_reward = self.rollout_evaluate(pi='pi')
-                miu_reward = self.rollout_evaluate(pi='miu')
-
-                wandb.log({"actor_loss": actor_loss.item(),
-                           "vae_loss": vae_loss.item(),
-                           "pi_reward": pi_reward,
-                           "miu_reward": miu_reward,
-                           "log_miu": log_miu.mean().item(),
-                           "it_steps": self.total_it,
-                           "alpha": self.alpha.item()
-                           })
 
     def train_vae(self, state, action):
         """
@@ -243,22 +215,23 @@ class BEAR:
         """
         with torch.no_grad():
             # Duplicate next state 10 times similar to BCQ
+            # Algorithm 1 step 4
             next_state = torch.repeat_interleave(next_state, 10, 0)
+            next_action = self.actor_target.get_action(next_state)
+            target_Q_all = self.critic_target(next_state, next_action)
 
-            next_action = self.actor_target(next_state)
-            target_Q1, target_Q2 = self.critic_target(next_state, next_action)
-
-            # Soft Clipped Double Q-learning
-            target_Q = self.lmbda * torch.min(target_Q1, target_Q2) + (1. - self.lmbda) * torch.max(target_Q1, target_Q2)
-
-            # Take max over each action sampled from the VAE
-            target_Q = target_Q.reshape(self.batch_size, -1).max(1)[0].reshape(-1, 1)
+            # Algorithm 1 step 5
+            target_Q = 0.75 * target_Q_all.min(0)[0] + 0.25 * target_Q_all.max(0)[0]
+            target_Q = target_Q.view(self.batch_size, -1).max(1)[0].view(-1, 1)
             target_Q = reward + not_done * self.gamma * target_Q
 
-        Q1, Q2 = self.critic_net(state, action)
+        Q_all = self.critic(state, action, with_var=False)
 
         # Critic loss
-        critic_loss = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q)
+        critic_loss = nn.MSELoss()(Q_all[0], target_Q) \
+                      + nn.MSELoss()(Q_all[1], target_Q) \
+                      + nn.MSELoss()(Q_all[2], target_Q) \
+                      + nn.MSELoss()(Q_all[3], target_Q)
 
         # Optimize Critic
         self.critic_optim.zero_grad()
@@ -266,22 +239,86 @@ class BEAR:
         self.critic_optim.step()
         return critic_loss.cpu().detach().numpy().item()
 
-    def update_alpha(self, state, action, log_miu):
+    def train_actor(self, state, num_samples):
         """
-        auto update the SBAC's hyper-parameter alpha in equation(8)
+        train Actor network
+        :param state:
+        :param num_samples:
+        :return:
         """
-        alpha = self.alpha_net(state, action)
-        self.alpha_optim.zero_grad()
-        alpha_loss = torch.mean(alpha * (log_miu + self.epsilon))
-        alpha_loss.backward()
-        self.alpha_optim.step()
+        sampled_actions, raw_sampled_actions = self.vae.decode_multiple(state)  # 256 x 10 x 11
+        actor_actions, raw_actor_actions = self.actor.get_action_multiple(state, num_samples)  # 256 x 10 x 3
 
-    def get_alpha(self, state, action):
-        """
-        auto get the appropriate parameter alpha in equation(8)
-        """
-        return self.alpha_net(state, action).detach()
+        if self.kernel_type == 'gaussian':
+            mmd_loss = mmd_loss_gaussian(raw_sampled_actions, raw_actor_actions)
+        else:
+            mmd_loss = mmd_loss_laplacian(raw_sampled_actions, raw_actor_actions)
 
+        action_divergence = ((sampled_actions - actor_actions) ** 2).sum(-1)
+        raw_action_divergence = ((raw_sampled_actions - raw_actor_actions) ** 2).sum(-1)
+
+        critic_state_input = state.unsqueeze(0).repeat(num_samples, 1, 1)  # 10 x 256 x 11
+        critic_state_input = critic_state_input.view(num_samples * state.shape[0], state.shape[1])  # 2560 x 11
+
+        critic_action_input = actor_actions.permute(1, 0, 2).contiguous()  # 10 x 256 x 3
+        critic_action_input = critic_action_input.view(num_samples * actor_actions.size(0), actor_actions.size(2))
+
+        q_all = self.critic(critic_state_input, critic_action_input)  # 4 x 2560 x 1
+        q_all = q_all.view(self.num_q, num_samples, actor_actions.shape[0], 1)  # 4 x 10 x 256 x 1
+        q_all = q_all.mean(1)  # 4 x 256 x 1
+        std_q = torch.std(q_all, dim=0, keepdim=False, unbiased=False)  # 256 x 1
+
+        q_all = q_all.min(0)[0]  # 256 x 1
+
+        # Actor loss
+        if self.total_it >= self.warmup_steps:
+            if self.auto_alpha:
+                actor_loss = (-q_all + 0.4 * (np.sqrt(
+                    (1 - self.delta_conf) / self.delta_conf)) * std_q + self.lagrange.exp().detach() * mmd_loss).mean()
+            else:
+                actor_loss = (-q_all + 0.4 * (
+                    np.sqrt((1 - self.delta_conf) / self.delta_conf)) * std_q + self.alpha * mmd_loss).mean()
+        else:
+            if self.auto_alpha:
+                actor_loss = (self.lagrange.exp().detach() * mmd_loss).mean()
+            else:
+                actor_loss = self.alpha * mmd_loss.mean()
+
+        std_loss = 0.4 * (np.sqrt((1 - self.delta_conf) / self.delta_conf)) * std_q.detach()
+
+        # Actor optim
+        self.actor_optim.zero_grad()
+        if self.auto_alpha:
+            actor_loss.backward(retain_graph=True)
+        else:
+            actor_loss.backward()
+        self.actor_optim.step()
+
+        # Update Target Networks
+        for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return actor_loss.cpu().detach().numpy().item()
+
+    def auto_update_lagrange(self, state, num_samples):
+        sampled_actions, raw_sampled_actions = self.vae.decode_multiple(state)  # 256 x 10 x 11
+        actor_actions, raw_actor_actions = self.actor.get_action_multiple(state, num_samples)  # 256 x 10 x 3
+
+        if self.kernel_type == 'gaussian':
+            mmd_loss = mmd_loss_gaussian(raw_sampled_actions, raw_actor_actions)
+        else:
+            mmd_loss = mmd_loss_laplacian(raw_sampled_actions, raw_actor_actions)
+
+        # Auto-update lagrange multiplier
+        if self.auto_alpha:
+            lagrange_loss = (self.lagrange.exp()*(mmd_loss-thresh)).mean()
+            self.lagrange_optim.zero_grad()
+            lagrange_loss.backward()
+            self.lagrange_optim.step()
+            self.lagrange.data.clamp_(min=-5.0, max=self.lagrange_thresh)
 
     def rollout_evaluate(self, pi='pi'):
         """
@@ -290,7 +327,7 @@ class BEAR:
         :return: the evaluation result
         """
         ep_rews = 0.
-        self.bc_standard_net.eval()
+        self.vae.eval()
         for _ in range(1):
             ep_rews = 0.
             state = self.env.reset()
@@ -300,11 +337,11 @@ class BEAR:
                 if pi == 'pi':
                     state = (state - self.s_mean) / (self.s_std + 1e-5)
                     state = state.squeeze()
-                    action = self.actor_net.get_action(state).cpu().detach().numpy()
+                    action = self.actor.get_action(state).cpu().detach().numpy()
                 else:
                     state = (state - self.s_mean) / (self.s_std + 1e-5)
                     state = state.squeeze()
-                    action = self.bc_standard_net.get_action(np.expand_dims(state, 0)).cpu().detach().numpy()
+                    action = self.vae.decode(np.expand_dims(state, 0)).cpu().detach().numpy()
                     action = action.squeeze()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward
@@ -313,15 +350,10 @@ class BEAR:
         ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100
         return ep_rews
 
-    def save_parameters(self):
-        torch.save(self.q_net.state_dict(), self.file_loc[0])
-        torch.save(self.q_pi_net.state_dict(), self.file_loc[2])
-        torch.save(self.actor_net.state_dict(), self.file_loc[3])
+    # def save_parameters(self):
+    #     torch.save(self.critic.state_dict(), self.file_loc[0])
+    #     torch.save(self.q_pi_net.state_dict(), self.file_loc[2])
+    #     torch.save(self.actor_net.state_dict(), self.file_loc[3])
 
-    def load_parameters(self):
-        self.bc_standard_net.load_state_dict(torch.load(self.file_loc[1]))
-
-    def load_q_actor_parameters(self):
-        self.bc_standard_net.load_state_dict(torch.load(self.file_loc[1]))
-        self.q_net.load_state_dict(torch.load(self.file_loc[0]))
-        self.actor_net.load_state_dict(torch.load(self.file_loc[3]))
+    # def load_parameters(self):
+    #     self.bc_standard_net.load_state_dict(torch.load(self.file_loc[1]))

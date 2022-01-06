@@ -184,6 +184,21 @@ class BC_VAE(nn.Module):
         action_recon = torch.tanh(action_recon)
         return action_recon
 
+    def decode_multiple(self, state, num_decode=10, z=None):
+        """
+        decode multiple actions, used in BEAR to generate 10 actions to do the MMD calculation
+        :param num_decode: the number of the decoded action
+        :param state:
+        :param z:
+        :return: num_decode actions
+        """
+        if z is None:
+            z = torch.randn((state.shape[0], num_decode, self.latent_dim)).to(self.device).clamp(-0.5, 0.5)
+        a = F.relu(self.fc4(torch.cat([state.unsqueeze(0).repeat(num_decode, 1, 1).permute(1, 0, 2), z], 2)))
+        a = F.relu(self.fc5(a))
+        a = self.action(a)
+        return torch.tanh(a), a
+
     def forward(self, state, action):
         if isinstance(state, np.ndarray):
             state = torch.tensor(state, dtype=torch.float)
@@ -283,6 +298,28 @@ class Actor(nn.Module):
         action = torch.tanh(action)
         return action
 
+    def get_action_multiple(self, x, num_samples=10):
+        """
+        used in BEAR
+        :param x:
+        :param num_samples:
+        :return:
+        """
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        x = x.unsqueeze(0).repeat(num_samples, 1, 1).permute(1, 0, 2)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x)
+        log_sigma = self.sigma_head(x)
+
+        log_sigma = torch.clip(log_sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+
+        a_distribution = Normal(mu, sigma)
+        action = a_distribution.rsample()
+        return torch.tanh(action), action
+
 
 class Actor_deterministic(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
@@ -368,12 +405,12 @@ class Ensemble_Critic(nn.Module):
         self.num_q = num_q
 
         # Q1 architecture
-        self.fc1 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc1 = nn.Linear(num_state + num_action, num_hidden)
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.fc3 = nn.Linear(num_hidden, 1)
 
         # Q2 architecture
-        self.fc4 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc4 = nn.Linear(num_state + num_action, num_hidden)
         self.fc5 = nn.Linear(num_hidden, num_hidden)
         self.fc6 = nn.Linear(num_hidden, 1)
 
@@ -383,7 +420,7 @@ class Ensemble_Critic(nn.Module):
         self.fc9 = nn.Linear(num_hidden, 1)
 
         # Q4 architecture
-        self.fc10 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc10 = nn.Linear(num_state + num_action, num_hidden)
         self.fc11 = nn.Linear(num_hidden, num_hidden)
         self.fc12 = nn.Linear(num_hidden, 1)
 
