@@ -136,6 +136,7 @@ class BCQ:
 
             # the action is composed of two different parts : perturbation(Actor) and Conditional-VAE(vae)
             next_action = self.actor_target(next_state) * self.phi + self.vae.decode(next_state)
+            next_action = next_action.clamp(-self.max_action, self.max_action)
             target_Q1, target_Q2 = self.critic_target(next_state, next_action)
 
             # Soft Clipped Double Q-learning

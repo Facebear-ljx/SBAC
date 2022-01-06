@@ -4,7 +4,7 @@ import d3rlpy
 dataset, env = d3rlpy.datasets.get_d4rl('walker2d-expert-v0')
 
 # prepare algorithm
-cql = d3rlpy.algos.CQL(use_gpu=True)
+cql = d3rlpy.algos.BEAR(use_gpu=True)
 
 # train
 cql.fit(dataset,
