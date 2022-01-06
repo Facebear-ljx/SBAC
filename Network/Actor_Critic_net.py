@@ -13,6 +13,13 @@ EPS = 1e-7
 
 class BC(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
+        """
+        Deterministic Behavior cloning policy
+        :param num_state: dimension of the state
+        :param num_action: dimension of the action
+        :param num_hidden: number of the units of hidden layer
+        :param device: cuda or cpu
+        """
         super(BC, self).__init__()
         self.device = device
         self.fc1 = nn.Linear(num_state, num_hidden)
@@ -20,6 +27,10 @@ class BC(nn.Module):
         self.mu_head = nn.Linear(num_hidden, num_action)
 
     def forward(self, x):
+        """
+        :param x: state
+        :return: action
+        """
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
@@ -30,6 +41,13 @@ class BC(nn.Module):
 
 class BC_standard(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
+        """
+        Stochastic Behavior cloning policy
+        :param num_state: dimension of the state
+        :param num_action: dimension of the action
+        :param num_hidden: number of the units of hidden layer
+        :param device: cuda or cpu
+        """
         super(BC_standard, self).__init__()
         self.device = device
         # self.bn0 = nn.BatchNorm1d(num_state)
@@ -42,6 +60,12 @@ class BC_standard(nn.Module):
         self._action_mags = torch.tensor(1, dtype=torch.float32).to(self.device)
 
     def get_log_density(self, x, y):
+        """
+        calculate the log(probability) of the action conditioned on the state
+        :param x: state
+        :param y: action
+        :return: log(P(action|state))
+        """
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         if isinstance(y, np.ndarray):
@@ -65,6 +89,11 @@ class BC_standard(nn.Module):
         return logp_pi
 
     def get_action(self, x):
+        """
+        sample an action from the distribution
+        :param x: state
+        :return: action
+        """
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         # x = self.bn0(x)
@@ -85,6 +114,14 @@ class BC_standard(nn.Module):
 # Conditional VAE
 class BC_VAE(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, num_latent, device):
+        """
+        Conditional VAE behavior cloning, used for BCQ
+        :param num_state: dimension of the state
+        :param num_action: dimension of the action
+        :param num_hidden: number of the units of hidden layer
+        :param num_latent: number of the latent variables
+        :param device: cuda or cpu
+        """
         super(BC_VAE, self).__init__()
         self.latent_dim = num_latent
         self.device = device
@@ -100,6 +137,12 @@ class BC_VAE(nn.Module):
         self.action = nn.Linear(num_hidden, num_action)
 
     def encode(self, state, action):
+        """
+        encode the state and action into latent space as a gaussian distribution ~ N(mean, sigma)
+        :param state:
+        :param action:
+        :return: Z~N(mean, sigma)
+        """
         x = torch.cat([state, action], dim=1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -108,11 +151,24 @@ class BC_VAE(nn.Module):
         return mean, log_sigma
 
     def reparameterize(self, mu, log_sigma):
+        """
+        reparameterize trick, sample a latent variable according to N(mu, sigma)
+        :param mu:
+        :param log_sigma:
+        :return: a latent variable:z
+        """
         std = torch.exp(log_sigma)
         eps = torch.randn_like(std)
         return mu + eps * std
 
     def decode(self, state, z=None):
+        """
+        decode the latent variable to action conditioned on state, if the z is missed, z is randomly sampled from
+        standard Normal distribution and clipped to [-0.5, 0.5]
+        :param state:
+        :param z: latent variable
+        :return: action
+        """
         # When sampling from the VAE, the latent vector is clipped to [-0.5, 0.5], copy from BCQ's implementation
         # https://github.com/sfujim/BCQ/blob/master/continuous_BCQ/BCQ.py
 
@@ -142,6 +198,13 @@ class BC_VAE(nn.Module):
 
 class Actor(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
+        """
+        Stochastic Actor network, used for SAC, SBAC, BEAR, CQL
+        :param num_state: dimension of the state
+        :param num_action: dimension of the action
+        :param num_hidden: number of the units of hidden layer
+        :param device: cuda or cpu
+        """
         super(Actor, self).__init__()
         self.device = device
         self.fc1 = nn.Linear(num_state, num_hidden)
@@ -171,6 +234,12 @@ class Actor(nn.Module):
         return action, logp_pi, a_distribution
 
     def get_log_density(self, x, y):
+        """
+        calculate the log probability of the action conditioned on state
+        :param x: state
+        :param y: action
+        :return: log(P(action|state))
+        """
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         if isinstance(y, np.ndarray):
@@ -194,6 +263,11 @@ class Actor(nn.Module):
         return logp_pi
 
     def get_action(self, x):
+        """
+        generate actions according to the state
+        :param x: state
+        :return: action
+        """
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
@@ -212,6 +286,13 @@ class Actor(nn.Module):
 
 class Actor_deterministic(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
+        """
+        Deterministic Actor network, used for TD3, DDPG, BCQ, TD3_BC
+        :param num_state: dimension of the state
+        :param num_action: dimension of the action
+        :param num_hidden: number of the units of hidden layer
+        :param device: cuda or cpu
+        """
         super(Actor_deterministic, self).__init__()
         self.device = device
         self.fc1 = nn.Linear(num_state, num_hidden)
@@ -227,10 +308,53 @@ class Actor_deterministic(nn.Module):
         return torch.tanh(a)
 
 
-# Double Q_net
 class Double_Critic(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
+        """
+        Double Q network, used for TD3_BC
+        :param num_state: dimension of the state
+        :param num_action: dimension of the action
+        :param num_hidden: number of the units of hidden layer
+        :param device: cuda or cpu
+        """
         super(Double_Critic, self).__init__()
+        self.device = device
+
+        # Q1 architecture
+        self.fc1 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc2 = nn.Linear(num_hidden, num_hidden)
+        self.fc3 = nn.Linear(num_hidden, 1)
+
+        # Q2 architecture
+        self.fc4 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc5 = nn.Linear(num_hidden, num_hidden)
+        self.fc6 = nn.Linear(num_hidden, 1)
+
+    def forward(self, x, y):
+        sa = torch.cat([x, y], 1)
+
+        q1 = F.relu(self.fc1(sa))
+        q1 = F.relu(self.fc2(q1))
+        q1 = self.fc3(q1)
+
+        q2 = F.relu(self.fc4(sa))
+        q2 = F.relu(self.fc5(q2))
+        q2 = self.fc6(q2)
+        return q1, q2
+
+    def Q1(self, state, action):
+        sa = torch.cat([state, action], 1)
+
+        q1 = F.relu(self.fc1(sa))
+        q1 = F.relu(self.fc2(q1))
+        q1 = self.fc3(q1)
+        return q1
+
+
+# Ensemble Q_net
+class Ensemble_Critic(nn.Module):
+    def __init__(self, num_state, num_action, num_hidden, num_q, device):
+        super(Ensemble_Critic, self).__init__()
         self.device = device
 
         # Q1 architecture
