@@ -311,7 +311,7 @@ class Actor_deterministic(nn.Module):
 class Double_Critic(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
         """
-        Double Q network, used for TD3_BC
+        Double Q network, used for TD3_BC, BCQ
         :param num_state: dimension of the state
         :param num_action: dimension of the action
         :param num_hidden: number of the units of hidden layer
@@ -354,8 +354,18 @@ class Double_Critic(nn.Module):
 # Ensemble Q_net
 class Ensemble_Critic(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, num_q, device):
+        """
+        Ensemble Q network, the number of the Q network is no more than 4.
+        Used in Bear
+        :param num_state: dimension of state
+        :param num_action: dimension of action
+        :param num_hidden: dimension of the hidden layer
+        :param num_q: number of ensembled Q network
+        :param device: cuda or cpu
+        """
         super(Ensemble_Critic, self).__init__()
         self.device = device
+        self.num_q = num_q
 
         # Q1 architecture
         self.fc1 = nn.Linear(num_state+num_action, num_hidden)
@@ -367,7 +377,23 @@ class Ensemble_Critic(nn.Module):
         self.fc5 = nn.Linear(num_hidden, num_hidden)
         self.fc6 = nn.Linear(num_hidden, 1)
 
-    def forward(self, x, y):
+        # Q3 architecture
+        self.fc7 = nn.Linear(num_state + num_action, num_hidden)
+        self.fc8 = nn.Linear(num_hidden, num_hidden)
+        self.fc9 = nn.Linear(num_hidden, 1)
+
+        # Q4 architecture
+        self.fc10 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc11 = nn.Linear(num_hidden, num_hidden)
+        self.fc12 = nn.Linear(num_hidden, 1)
+
+    def forward(self, x, y, with_var=False):
+        """
+        :param x: state
+        :param y: action
+        :param with_var: whether output the variance of Q networks
+        :return: Q value of all the Q networks. if with_var=True, output the variance too.
+        """
         sa = torch.cat([x, y], 1)
 
         q1 = F.relu(self.fc1(sa))
@@ -377,7 +403,22 @@ class Ensemble_Critic(nn.Module):
         q2 = F.relu(self.fc4(sa))
         q2 = F.relu(self.fc5(q2))
         q2 = self.fc6(q2)
-        return q1, q2
+
+        q3 = F.relu(self.fc7(sa))
+        q3 = F.relu(self.fc8(q3))
+        q3 = self.fc9(q3)
+
+        q4 = F.relu(self.fc10(sa))
+        q4 = F.relu(self.fc11(q4))
+        q4 = self.fc12(q4)
+
+        all_q = torch.cat([q1.unsqueeze(0), q2.unsqueeze(0), q3.unsqueeze(0), q4.unsqueeze(0)], 0)   # num_q x B x 1
+
+        if with_var:
+            std_q = torch.std(all_q, dim=0, keepdim=False, unbiased=False)
+            return all_q, std_q
+
+        return all_q
 
     def Q1(self, state, action):
         sa = torch.cat([state, action], 1)
