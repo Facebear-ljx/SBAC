@@ -3,3 +3,4 @@ Facebear's implementation\
 **PPO**(Proximal policy optimization)\
 **TD3+BC**(A Minimalist approach to Offline RL)\
 **BCQ**(Batch-constrained Q learning)\
+**BEAR**(Bootstrapping Error Accumulation Reduction)
