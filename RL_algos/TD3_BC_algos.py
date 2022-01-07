@@ -50,7 +50,6 @@ class TD3_BC:
         self.env.seed(seed)
         self.env.action_space.seed(seed)
         torch.manual_seed(seed)
-        np.random.seed(seed)
 
         # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()
