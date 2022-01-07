@@ -254,7 +254,7 @@ class BEAR:
             if self.auto_alpha:
                 actor_loss = (-q + self.lagrange.exp() * mmd_loss.unsqueeze(1)).mean()
             else:
-                actor_loss = (-q + 22000. * mmd_loss).mean()
+                actor_loss = (-q + 22000. * mmd_loss.unsqueeze(1)).mean()
         else:
             if self.auto_alpha:
                 actor_loss = self.lagrange.exp() * mmd_loss.mean()
