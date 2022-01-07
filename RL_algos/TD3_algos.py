@@ -26,6 +26,7 @@ class TD3:
                  policy_freq=2,
                  explore_freq=10,
                  start_steps=25e3,
+                 seed=0,
                  device='cpu'):
 
         super(TD3, self).__init__()
@@ -34,6 +35,12 @@ class TD3:
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
+
+        # set seed
+        self.env.seed(seed)
+        self.env.action_space.seed(seed)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
         # prepare the actor and critic
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)

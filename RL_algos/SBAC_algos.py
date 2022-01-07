@@ -50,6 +50,7 @@ class SBAC:
                  epsilon=1,
                  batch_size=256,
                  lmbda=1,
+                 seed=0,
                  device='cpu'):
         """
         Facebear's implementation of SBAC (Offline Reinforcement Learning with Soft Behavior Regularization)
@@ -80,6 +81,13 @@ class SBAC:
         #                                                           scale_rewards=True, scale_state=True)
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL_td_lambda(self.dataset, scale_rewards=False,
                                                                             scale_state=True, n=lmbda)
+
+        # set seed
+        self.env.seed(seed)
+        self.env.action_space.seed(seed)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
         # hyper-parameters
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic

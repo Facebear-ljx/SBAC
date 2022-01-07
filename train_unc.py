@@ -13,6 +13,7 @@ def main():
     parser.add_argument('--env_name', default='hopper-medium-v2', help='choose your mujoco env')
     parser.add_argument('--warmup_steps', default=int(3e+4), type=int)
     parser.add_argument('--alpha', default=15, type=float)
+    parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
     wandb.config.update(args)
 
@@ -25,7 +26,8 @@ def main():
                               device=args.device,
                               alpha=args.alpha,
                               warm_up_steps=args.warmup_steps,
-                              ratio=1
+                              ratio=1,
+                              seed=args.seed
                               )
 
     agent_TD3_BC.learn(total_time_step=int(1e+6))

@@ -13,6 +13,7 @@ def main():
     parser.add_argument('--env_name', default='hopper-medium-replay-v2', help='choose your mujoco env')
     parser.add_argument('--warmup_steps', default=int(1e+4), type=int)
     parser.add_argument('--skip_steps', default=1, type=int, help='skip steps of TD update')
+    parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
     wandb.config.update(args)
 
@@ -23,7 +24,8 @@ def main():
 
     agent_BEAR = BEAR(env_name=env_name,
                       device=args.device,
-                      warmup_steps=args.warmup_steps
+                      warmup_steps=args.warmup_steps,
+                      seed=args.seed
                       )
 
     agent_BEAR.learn(total_time_step=int(1e+6))

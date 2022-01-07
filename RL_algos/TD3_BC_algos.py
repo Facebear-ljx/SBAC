@@ -22,6 +22,7 @@ class TD3_BC:
                  policy_freq=2,
                  alpha=2.5,
                  ratio=1,
+                 seed=0,
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
@@ -44,6 +45,12 @@ class TD3_BC:
         self.env = gym.make(env_name)
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
+
+        # set seed
+        self.env.seed(seed)
+        self.env.action_space.seed(seed)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
         # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()

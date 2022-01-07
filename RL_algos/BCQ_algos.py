@@ -8,6 +8,7 @@ import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor_deterministic, Double_Critic, BC_VAE
+import numpy as np
 
 
 class BCQ:
@@ -20,6 +21,7 @@ class BCQ:
                  ratio=1,
                  lmbda=0.75,
                  skip_steps=1,
+                 seed=0,
                  device='cpu'):
         """
         Facebear's implementation of BCQ (Off-Policy Deep Reinforcement Learning without Exploration)
@@ -41,6 +43,12 @@ class BCQ:
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
         num_latent = num_action * 2
+
+        # set seed
+        self.env.seed(seed)
+        self.env.action_space.seed(seed)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
         # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()

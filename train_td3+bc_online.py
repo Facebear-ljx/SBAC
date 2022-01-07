@@ -11,6 +11,7 @@ def main():
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
     parser.add_argument('--ratio', default=1, type=int)
     parser.add_argument('--env_name', default='hopper-medium-v2', help='choose your mujoco env')
+    parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
     wandb.config.update(args)
 
@@ -20,7 +21,7 @@ def main():
     wandb.run.name = f"{args.ratio}_{env_name}"
     agent_TD3_BC_online = TD3_BC_online(env_name=env_name,
                                         device=args.device,
-                                        ratio=args.ratio
+                                        ratio=args.ratio,
                                         )
     # agent_TD3_BC_online.load_parameters()
     # for _ in range(100):

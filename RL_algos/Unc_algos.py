@@ -24,6 +24,7 @@ class TD3_BC_Unc:
                  ratio=1,
                  num_q=4,
                  warm_up_steps=30000,
+                 seed=0,
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
@@ -46,6 +47,12 @@ class TD3_BC_Unc:
         self.env = gym.make(env_name)
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
+
+        # set seed
+        self.env.seed(seed)
+        self.env.action_space.seed(seed)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
         # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()

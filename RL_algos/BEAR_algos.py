@@ -72,6 +72,7 @@ class BEAR:
                  num_q=2,
                  lagrange_thresh=10,
                  delta_conf=0.1,
+                 seed=0,
                  kernel_type='laplacian',
                  device='cpu'):
         """
@@ -96,6 +97,12 @@ class BEAR:
         num_state = self.env.observation_space.shape[0]
         num_action = self.env.action_space.shape[0]
         num_latent = num_action * 2
+
+        # set seed
+        self.env.seed(seed)
+        self.env.action_space.seed(seed)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
         # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()
