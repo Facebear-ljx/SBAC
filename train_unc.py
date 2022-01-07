@@ -27,7 +27,7 @@ def main():
                               alpha=args.alpha,
                               warm_up_steps=args.warmup_steps,
                               ratio=1,
-                              seed=args.seed
+                              # seed=args.seed
                               )
 
     agent_TD3_BC.learn(total_time_step=int(1e+6))

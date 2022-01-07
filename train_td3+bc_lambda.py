@@ -31,7 +31,7 @@ def main():
                                            ratio=1,
                                            alpha=args.alpha,
                                            lmbda=args.skip_steps,
-                                           seed=seed
+                                           # seed=seed
                                            )
 
     agent_TD3_BC_lambda.learn(total_time_step=int(1e+6))

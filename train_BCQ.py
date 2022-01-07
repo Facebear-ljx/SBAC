@@ -24,7 +24,7 @@ def main():
     agent_BCQ = BCQ(env_name=env_name,
                     device=args.device,
                     skip_steps=args.skip_steps,
-                    seed=args.seed
+                    # seed=args.seed
                     )
 
     agent_BCQ.learn(total_time_step=int(1e+6))

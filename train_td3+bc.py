@@ -23,7 +23,7 @@ def main():
     agent_TD3_BC = TD3_BC(env_name=env_name,
                           device=args.device,
                           ratio=1,
-                          seed=args.seed
+                          # seed=args.seed
                           )
 
     agent_TD3_BC.learn(total_time_step=int(1e+6))

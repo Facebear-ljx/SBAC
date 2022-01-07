@@ -49,7 +49,7 @@ def main():
                       device=args.device,
                       Use_W=args.importance,
                       lmbda=args.skip_steps,
-                      seed=args.seed
+                      # seed=args.seed
                       )
 
     agent_SBAC.learn()
