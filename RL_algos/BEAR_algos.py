@@ -12,6 +12,7 @@ import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor, BC_VAE, Ensemble_Critic
+from tqdm import tqdm
 
 ALPHA_MAX = 500.
 ALPHA_MIN = 0.2
@@ -64,13 +65,11 @@ class BEAR:
                  lr_critic=1e-3,
                  gamma=0.99,
                  tau=0.005,
-                 num_sample_batch=10,
-                 warmup_steps=10000,
-                 alpha=100,
+                 num_sample_batch=4,
+                 warmup_steps=3000,
                  auto_alpha=True,
                  batch_size=256,
-                 num_q=4,
-                 lmbda=1,
+                 num_q=2,
                  lagrange_thresh=10,
                  delta_conf=0.1,
                  kernel_type='laplacian',
@@ -85,7 +84,6 @@ class BEAR:
         :param lr_critic: learning rate of the critic network
         :param gamma: discounting factor of the cumulated reward
         :param warmup_steps: the steps of the training times of behavior cloning
-        :param alpha: the hyper-parameters
         :param auto_alpha: whether auto update the alpha
         :param batch_size: sample batch size
         :param device: cuda or cpu
@@ -102,15 +100,14 @@ class BEAR:
         # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL_td_lambda(self.dataset, scale_rewards=False,
-                                                                            scale_state=True, n=lmbda)
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
 
         # Actor, Critic, Conditional VAE
         self.actor = Actor(num_state, num_action, num_hidden, device).float().to(device)
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optim = optim.Adam(self.actor.parameters(), lr_actor)
 
-        self.critic = Ensemble_Critic(num_state, num_action, num_hidden, 4, device).float().to(device)
+        self.critic = Ensemble_Critic(num_state, num_action, num_hidden, num_q, device).float().to(device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optim = optim.Adam(self.critic.parameters(), lr_critic)
 
@@ -123,7 +120,6 @@ class BEAR:
         self.batch_size = batch_size
         self.warmup_steps = warmup_steps
         self.auto_alpha = auto_alpha
-        self.alpha = alpha
         self.num_sample_batch = num_sample_batch
         self.num_q = num_q
         self.kernel_type = kernel_type
@@ -144,9 +140,7 @@ class BEAR:
         :return: None
         """
         # train !
-        while self.total_it <= total_time_step:
-            self.total_it += 1
-
+        for total_it in tqdm(range(int(total_time_step))):
             # sample data
             state, action, next_state, next_action, reward, not_done = self.replay_buffer.sample(self.batch_size)
 
@@ -157,39 +151,33 @@ class BEAR:
             critic_loss = self.train_Q_pi(state, action, next_state, reward, not_done)
 
             # train Actor
-            actor_loss = self.train_actor(state, self.num_sample_batch)
-
-            # Auto-update the lagrange multiplier
-            self.auto_update_lagrange(state, self.num_sample_batch)
+            actor_loss, q_mean, action_divergence, mmd_loss = self.train_actor(state, self.num_sample_batch)
 
             # log_summary
-            if self.total_it % 3000 == 0:
+            if total_it % 3000 == 0:
                 pi_reward = self.rollout_evaluate(pi='pi')
                 miu_reward = self.rollout_evaluate(pi='miu')
 
                 wandb.log({"actor_loss": actor_loss,
                            "vae_loss": vae_loss,
                            "critic_loss": critic_loss,
+                           "mmd_loss": mmd_loss,
+                           "q_mean": q_mean,
                            "pi_reward": pi_reward,
                            "miu_reward": miu_reward,
-                           "it_steps": self.total_it,
+                           "action_divergence": action_divergence,
+                           "lagrange": self.lagrange.cpu().detach().numpy().item(),
+                           "it_steps": total_it,
                            })
-
-    def entropy_loss(self, samples1, state):
-        state_rep = state.unsqueeze(1).repeat(1, samples1.size(1), 1).view(-1, state.size(-1))
-        samples1_reshape = samples1.view(-1, samples1.size(-1))
-        samples1_log_pis = self.actor.log_pis(state=state_rep, raw_action=samples1_reshape)
-        samples1_log_prob = samples1_log_pis.view(state.size(0), samples1.size(1))
-        samples1_prob = samples1_log_prob.clamp(min=-5, max=4).exp()
-        return samples1_prob.mean(1)
+            self.total_it += 1
 
     def select_action(self, state):
         """When running the actor, we just select action based on the max of the Q-function computed over
             samples from the policy -- which biases things to support."""
         with torch.no_grad():
-            state = torch.FloatTensor(state.reshape(1, -1)).repeat(10, 1).to(self.device)
-            action = self.actor(state)
-            q1 = self.critic.q1(state, action)
+            state = torch.FloatTensor(state.reshape(1, -1)).repeat(100, 1).to(self.device)
+            action = self.actor.get_action(state)
+            q1 = self.critic.Q1(state, action)
             ind = q1.max(0)[1]
         return action[ind].cpu().data.numpy().flatten()
 
@@ -228,10 +216,7 @@ class BEAR:
         Q_all = self.critic(state, action, with_var=False)
 
         # Critic loss
-        critic_loss = nn.MSELoss()(Q_all[0], target_Q) \
-                      + nn.MSELoss()(Q_all[1], target_Q) \
-                      + nn.MSELoss()(Q_all[2], target_Q) \
-                      + nn.MSELoss()(Q_all[3], target_Q)
+        critic_loss = nn.MSELoss()(Q_all[0], target_Q) + nn.MSELoss()(Q_all[1], target_Q)
 
         # Optimize Critic
         self.critic_optim.zero_grad()
@@ -246,16 +231,9 @@ class BEAR:
         :param num_samples:
         :return:
         """
-        sampled_actions, raw_sampled_actions = self.vae.decode_multiple(state)  # 256 x 10 x 11
         actor_actions, raw_actor_actions = self.actor.get_action_multiple(state, num_samples)  # 256 x 10 x 3
 
-        if self.kernel_type == 'gaussian':
-            mmd_loss = mmd_loss_gaussian(raw_sampled_actions, raw_actor_actions)
-        else:
-            mmd_loss = mmd_loss_laplacian(raw_sampled_actions, raw_actor_actions)
-
-        action_divergence = ((sampled_actions - actor_actions) ** 2).sum(-1)
-        raw_action_divergence = ((raw_sampled_actions - raw_actor_actions) ** 2).sum(-1)
+        mmd_loss, action_divergence = self.get_mmd_loss(state, num_samples)
 
         critic_state_input = state.unsqueeze(0).repeat(num_samples, 1, 1)  # 10 x 256 x 11
         critic_state_input = critic_state_input.view(num_samples * state.shape[0], state.shape[1])  # 2560 x 11
@@ -265,35 +243,36 @@ class BEAR:
 
         q_all = self.critic(critic_state_input, critic_action_input)  # 4 x 2560 x 1
         q_all = q_all.view(self.num_q, num_samples, actor_actions.shape[0], 1)  # 4 x 10 x 256 x 1
-        q_all = q_all.mean(1)  # 4 x 256 x 1
-        std_q = torch.std(q_all, dim=0, keepdim=False, unbiased=False)  # 256 x 1
 
-        q_all = q_all.min(0)[0]  # 256 x 1
+        q_mean = q_all.mean(1)  # 4x256x1
+        q_std = torch.std(q_mean, dim=0, keepdim=False, unbiased=False)  # 256x1
+        q = q_mean.min(0)[0]  # 256x1
+        q = q - 0.4 * (np.sqrt((1 - self.delta_conf) / self.delta_conf)) * q_std  # 256x1
 
         # Actor loss
         if self.total_it >= self.warmup_steps:
             if self.auto_alpha:
-                actor_loss = (-q_all + 0.4 * (np.sqrt(
-                    (1 - self.delta_conf) / self.delta_conf)) * std_q + self.lagrange.exp().detach() * mmd_loss).mean()
+                actor_loss = (-q + self.lagrange.exp() * mmd_loss.unsqueeze(1)).mean()
             else:
-                actor_loss = (-q_all + 0.4 * (
-                    np.sqrt((1 - self.delta_conf) / self.delta_conf)) * std_q + self.alpha * mmd_loss).mean()
+                actor_loss = (-q + 22000. * mmd_loss).mean()
         else:
             if self.auto_alpha:
-                actor_loss = (self.lagrange.exp().detach() * mmd_loss).mean()
+                actor_loss = self.lagrange.exp() * mmd_loss.mean()
             else:
-                actor_loss = self.alpha * mmd_loss.mean()
-
-        std_loss = 0.4 * (np.sqrt((1 - self.delta_conf) / self.delta_conf)) * std_q.detach()
+                actor_loss = 22000. * mmd_loss.mean()
 
         # Actor optim
         self.actor_optim.zero_grad()
-        if self.auto_alpha:
-            actor_loss.backward(retain_graph=True)
-        else:
-            actor_loss.backward()
+        actor_loss.backward()
         self.actor_optim.step()
 
+        # lagrange loss and optim
+        lagrange_loss = -self.lagrange.exp() * (mmd_loss.detach() - thresh).mean()
+        self.lagrange_optim.zero_grad()
+        lagrange_loss.backward()
+        self.lagrange_optim.step()
+
+        self.lagrange.data.clamp_(min=-5.0, max=self.lagrange_thresh)
         # Update Target Networks
         for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
@@ -301,10 +280,13 @@ class BEAR:
         for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        return actor_loss.cpu().detach().numpy().item()
+        return actor_loss.cpu().detach().numpy().item(), \
+               q_all.mean().cpu().detach().numpy().item(), \
+               action_divergence.mean().cpu().detach().numpy().item(), \
+               mmd_loss.mean().cpu().detach().numpy().item()
 
-    def auto_update_lagrange(self, state, num_samples):
-        sampled_actions, raw_sampled_actions = self.vae.decode_multiple(state)  # 256 x 10 x 11
+    def get_mmd_loss(self, state, num_samples):
+        sampled_actions, raw_sampled_actions = self.vae.decode_multiple(state, num_samples)  # 256 x 10 x 11
         actor_actions, raw_actor_actions = self.actor.get_action_multiple(state, num_samples)  # 256 x 10 x 3
 
         if self.kernel_type == 'gaussian':
@@ -312,13 +294,8 @@ class BEAR:
         else:
             mmd_loss = mmd_loss_laplacian(raw_sampled_actions, raw_actor_actions)
 
-        # Auto-update lagrange multiplier
-        if self.auto_alpha:
-            lagrange_loss = (self.lagrange.exp()*(mmd_loss-thresh)).mean()
-            self.lagrange_optim.zero_grad()
-            lagrange_loss.backward()
-            self.lagrange_optim.step()
-            self.lagrange.data.clamp_(min=-5.0, max=self.lagrange_thresh)
+        action_divergence = ((sampled_actions - actor_actions) ** 2).sum(-1)
+        return mmd_loss, action_divergence
 
     def rollout_evaluate(self, pi='pi'):
         """
@@ -337,7 +314,7 @@ class BEAR:
                 if pi == 'pi':
                     state = (state - self.s_mean) / (self.s_std + 1e-5)
                     state = state.squeeze()
-                    action = self.actor.get_action(state).cpu().detach().numpy()
+                    action = self.select_action(state)
                 else:
                     state = (state - self.s_mean) / (self.s_std + 1e-5)
                     state = state.squeeze()

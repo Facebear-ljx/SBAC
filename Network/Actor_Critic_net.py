@@ -393,7 +393,7 @@ class Ensemble_Critic(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, num_q, device):
         """
         Ensemble Q network, the number of the Q network is no more than 4.
-        Used in Bear
+        Used in Bear and TD3_BC_Unc
         :param num_state: dimension of state
         :param num_action: dimension of action
         :param num_hidden: dimension of the hidden layer
@@ -441,15 +441,24 @@ class Ensemble_Critic(nn.Module):
         q2 = F.relu(self.fc5(q2))
         q2 = self.fc6(q2)
 
-        q3 = F.relu(self.fc7(sa))
-        q3 = F.relu(self.fc8(q3))
-        q3 = self.fc9(q3)
+        if self.num_q >= 3:
+            q3 = F.relu(self.fc7(sa))
+            q3 = F.relu(self.fc8(q3))
+            q3 = self.fc9(q3)
 
-        q4 = F.relu(self.fc10(sa))
-        q4 = F.relu(self.fc11(q4))
-        q4 = self.fc12(q4)
+        if self.num_q >= 4:
+            q4 = F.relu(self.fc10(sa))
+            q4 = F.relu(self.fc11(q4))
+            q4 = self.fc12(q4)
 
-        all_q = torch.cat([q1.unsqueeze(0), q2.unsqueeze(0), q3.unsqueeze(0), q4.unsqueeze(0)], 0)   # num_q x B x 1
+        if self.num_q == 2:
+            all_q = torch.cat([q1.unsqueeze(0), q2.unsqueeze(0)], 0)
+        elif self.num_q == 3:
+            all_q = torch.cat([q1.unsqueeze(0), q2.unsqueeze(0), q3.unsqueeze(0)], 0)
+        elif self.num_q == 4:
+            all_q = torch.cat([q1.unsqueeze(0), q2.unsqueeze(0), q3.unsqueeze(0), q4.unsqueeze(0)], 0)   # num_q x B x 1
+        else:
+            print("wrong num_q!!!! should in range[2,4]")
 
         if with_var:
             std_q = torch.std(all_q, dim=0, keepdim=False, unbiased=False)

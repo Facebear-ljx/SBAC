@@ -10,7 +10,7 @@ def main():
     # Parameters
     parser = argparse.ArgumentParser(description='Solve the Hopper-v2 with BEAR')
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
-    parser.add_argument('--env_name', default='hopper-medium-v2', help='choose your mujoco env')
+    parser.add_argument('--env_name', default='hopper-medium-replay-v2', help='choose your mujoco env')
     parser.add_argument('--skip_steps', default=1, type=int, help='skip steps of TD update')
     args = parser.parse_args()
     wandb.config.update(args)
