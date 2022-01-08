@@ -18,7 +18,7 @@ def main():
     wandb.config.update(args)
 
     current_time = datetime.datetime.now()
-    env_name = "HalfCheetah-v2"
+    env_name = args.env_name
     wandb.run.name = f"{env_name}_{current_time}"
     agent_SAC = SAC(env_name=env_name,
                     device=args.device,
