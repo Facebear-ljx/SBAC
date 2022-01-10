@@ -9,6 +9,7 @@ from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor_deterministic, Double_Critic, Ensemble_Critic
 from tqdm import tqdm
+import numpy as np
 
 
 class TD3_BC_Unc:
@@ -23,6 +24,7 @@ class TD3_BC_Unc:
                  alpha=2.5,
                  ratio=1,
                  num_q=4,
+                 n=1,
                  warm_up_steps=30000,
                  seed=0,
                  device='cpu'):
@@ -58,7 +60,8 @@ class TD3_BC_Unc:
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio)
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL_td_lambda(self.dataset, scale_rewards=False,
+                                                                            scale_state=True, n=n)
 
         # prepare the actor and critic
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
@@ -83,7 +86,7 @@ class TD3_BC_Unc:
         self.max_action = 1.
 
         # Q and Critic file location
-        self.file_loc = prepare_env(env_name)
+        # self.file_loc = prepare_env(env_name)
 
     def learn(self, total_time_step=int(1e+6)):
         """
@@ -96,9 +99,9 @@ class TD3_BC_Unc:
             state, action, next_state, next_action, reward, not_done = self.replay_buffer.sample(self.batch_size)
 
             # update Critic
-            critic_loss_pi, Unc_pi, Unc_miu = self.train_Q_pi(state, action,
-                                                              next_state, next_action,
-                                                              reward, not_done)
+            critic_loss_pi, Unc_pi, Unc_miu, std_diff, Q_diff = self.train_Q_pi(state, action,
+                                                                                next_state, next_action,
+                                                                                reward, not_done)
             # delayed policy update
             if total_it % self.policy_freq == 0:
                 actor_loss, bc_loss, Q_pi_mean = self.train_actor(state, action)
@@ -111,12 +114,14 @@ class TD3_BC_Unc:
                                "Q_pi_mean": Q_pi_mean,
                                "Unc_Q_pi": Unc_pi,
                                "Unc_Q_miu": Unc_miu,
+                               "Unc_diff": std_diff,
+                               "Q_diff": Q_diff,
                                "evaluate_rewards": evaluate_reward,
                                "it_steps": total_it
                                })
 
-            if total_it % 100000 == 0:
-                self.save_parameters()
+            # if total_it % 100000 == 0:
+            #     self.save_parameters()
 
     def learn_with_warmup(self, total_time_step=1e+5):
         """
@@ -137,9 +142,9 @@ class TD3_BC_Unc:
                                })
             else:
                 # update Critic
-                critic_loss_pi, Unc_pi, Unc_miu = self.train_Q_pi(state, action,
-                                                                  next_state, next_action,
-                                                                  reward, not_done)
+                critic_loss_pi, Unc_pi, Unc_miu, std_diff, Q_diff = self.train_Q_pi(state, action,
+                                                                                    next_state, next_action,
+                                                                                    reward, not_done)
                 # delayed policy update
                 if total_it % self.policy_freq == 0:
                     actor_loss, bc_loss, Q_pi_mean = self.train_actor(state, action)
@@ -152,12 +157,14 @@ class TD3_BC_Unc:
                                    "Q_pi_mean": Q_pi_mean,
                                    "Unc_Q_pi": Unc_pi,
                                    "Unc_Q_miu": Unc_miu,
+                                   "Unc_diff": std_diff,
+                                   "Q_diff": Q_diff,
                                    "evaluate_rewards": evaluate_reward,
                                    "it_steps": total_it
                                    })
 
-            if total_it % 100000 == 0:
-                self.save_parameters()
+            # if total_it % 100000 == 0:
+            #     self.save_parameters()
 
     def warm_up_actor(self, state, action):
         action_pi = self.actor_net(state)
@@ -199,10 +206,24 @@ class TD3_BC_Unc:
             target_Q_miu_all, std_miu_all = self.critic_target(next_state, next_action_miu,
                                                                with_var=True)  # 4x256x1, 256x1
 
-            std = torch.cat([std_pi_all.unsqueeze(0), std_miu_all.unsqueeze(0)], 0)
-            index_Q_miu = std.min(0)[1]  # 256x1
-            index_Q_pi = 1 - index_Q_miu
-            target_Q = target_Q_pi_all * index_Q_pi + target_Q_miu_all * index_Q_miu
+            # 11111111
+            # std = torch.cat([std_pi_all.unsqueeze(0), std_miu_all.unsqueeze(0)], 0)
+            # index_Q_miu = std.min(0)[1]  # 256x1
+            # index_Q_pi = 1 - index_Q_miu
+            # target_Q = target_Q_pi_all * index_Q_pi + target_Q_miu_all * index_Q_miu
+
+            # 222222222
+            # alpha = std_miu_all / (std_pi_all + std_miu_all)
+            # target_Q = target_Q_pi_all * alpha + target_Q_miu_all * (1 - alpha)
+
+            # 333333333
+            alpha = std_miu_all - std_pi_all
+            alpha = torch.exp(alpha) / (torch.exp(alpha) + 1)
+            target_Q = target_Q_pi_all * alpha + target_Q_miu_all * (1 - alpha)
+
+            std_diff = (std_pi_all - std_miu_all).mean()
+            Q_diff = (target_Q_pi_all - target_Q_miu_all).mean()
+            # target_Q = target_Q_pi_all
 
         target_Q = reward + not_done * self.gamma * target_Q
 
@@ -220,7 +241,9 @@ class TD3_BC_Unc:
         self.critic_optim.step()
         return critic_loss.cpu().detach().numpy().item(), \
                std_pi_all.mean().cpu().detach().numpy().item(), \
-               std_miu_all.mean().cpu().detach().numpy().item(),
+               std_miu_all.mean().cpu().detach().numpy().item(), \
+               std_diff.cpu().detach().numpy().item(), \
+               Q_diff.cpu().detach().numpy().item()
 
     def train_actor(self, state, action):
         """
@@ -262,6 +285,7 @@ class TD3_BC_Unc:
         state = self.env.reset()
         while True:
             state = (state - self.s_mean) / (self.s_std + 1e-5)
+            state = state.squeeze()
             action = self.actor_net(state).cpu().detach().numpy()
             state, reward, done, _ = self.env.step(action)
             ep_rews += reward
@@ -270,10 +294,10 @@ class TD3_BC_Unc:
         ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100
         return ep_rews
 
-    def save_parameters(self):
-        torch.save(self.critic_net.state_dict(), self.file_loc[2])
-        torch.save(self.actor_net.state_dict(), self.file_loc[3])
-
-    def load_parameters(self):
-        self.critic_net.load_state_dict(torch.load(self.file_loc[2]))
-        self.actor_net.load_state_dict(torch.load(self.file_loc[3]))
+    # def save_parameters(self):
+    #     torch.save(self.critic_net.state_dict(), self.file_loc[2])
+    #     torch.save(self.actor_net.state_dict(), self.file_loc[3])
+    #
+    # def load_parameters(self):
+    #     self.critic_net.load_state_dict(torch.load(self.file_loc[2]))
+    #     self.actor_net.load_state_dict(torch.load(self.file_loc[3]))

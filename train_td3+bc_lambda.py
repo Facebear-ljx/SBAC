@@ -4,16 +4,16 @@ from RL_algos.TD3_BC_td_lambda import TD3_BC_td_lambda
 import datetime
 
 
-
 def main():
     wandb.init(project="td3_bc_lambda", entity="facebear")
 
     # Parameters
     parser = argparse.ArgumentParser(description='Solve the Hopper-v2 with TD3_BC')
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
-    parser.add_argument('--env_name', default='hopper-medium-v2', help='choose your mujoco env')
+    parser.add_argument('--env_name', default='hopper-medium-replay-v2', help='choose your mujoco env')
     parser.add_argument('--skip_steps', type=int, default=1, help='1~4')
     parser.add_argument('--alpha', type=float, default=2.5, help='alpha')
+    parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
 
@@ -31,6 +31,7 @@ def main():
                                            ratio=1,
                                            alpha=args.alpha,
                                            lmbda=args.skip_steps,
+                                           gamma=args.gamma
                                            # seed=seed
                                            )
 
