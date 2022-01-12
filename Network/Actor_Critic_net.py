@@ -358,12 +358,12 @@ class Double_Critic(nn.Module):
         self.device = device
 
         # Q1 architecture
-        self.fc1 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc1 = nn.Linear(num_state + num_action, num_hidden)
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.fc3 = nn.Linear(num_hidden, 1)
 
         # Q2 architecture
-        self.fc4 = nn.Linear(num_state+num_action, num_hidden)
+        self.fc4 = nn.Linear(num_state + num_action, num_hidden)
         self.fc5 = nn.Linear(num_hidden, num_hidden)
         self.fc6 = nn.Linear(num_hidden, 1)
 
@@ -456,7 +456,7 @@ class Ensemble_Critic(nn.Module):
         elif self.num_q == 3:
             all_q = torch.cat([q1.unsqueeze(0), q2.unsqueeze(0), q3.unsqueeze(0)], 0)
         elif self.num_q == 4:
-            all_q = torch.cat([q1.unsqueeze(0), q2.unsqueeze(0), q3.unsqueeze(0), q4.unsqueeze(0)], 0)   # num_q x B x 1
+            all_q = torch.cat([q1.unsqueeze(0), q2.unsqueeze(0), q3.unsqueeze(0), q4.unsqueeze(0)], 0)  # num_q x B x 1
         else:
             print("wrong num_q!!!! should in range[2,4]")
 
@@ -473,6 +473,30 @@ class Ensemble_Critic(nn.Module):
         q1 = F.relu(self.fc2(q1))
         q1 = self.fc3(q1)
         return q1
+
+    def Q2(self, state, action):
+        sa = torch.cat([state, action], 1)
+
+        q2 = F.relu(self.fc4(sa))
+        q2 = F.relu(self.fc5(q2))
+        q2 = self.fc6(q2)
+        return q2
+
+    def Q3(self, state, action):
+        sa = torch.cat([state, action], 1)
+
+        q3 = F.relu(self.fc7(sa))
+        q3 = F.relu(self.fc8(q3))
+        q3 = self.fc9(q3)
+        return q3
+
+    def Q4(self, state, action):
+        sa = torch.cat([state, action], 1)
+
+        q4 = F.relu(self.fc10(sa))
+        q4 = F.relu(self.fc11(q4))
+        q4 = self.fc12(q4)
+        return q4
 
 
 class V_critic(nn.Module):
@@ -546,3 +570,47 @@ class W(nn.Module):
         x = F.softplus(self.fc3(x))
         return x
 
+
+class EBM(nn.Module):
+    def __init__(self, num_state, num_action, num_hidden, device, batch_size):
+        super(EBM, self).__init__()
+        self.device = device
+        self.batch_size = batch_size
+        self.num_action = num_action
+        self.num_state = num_state
+        self.negative_samples = 256
+        self.fc1 = nn.Linear(num_state + num_action, num_hidden)
+        self.fc2 = nn.Linear(num_hidden, num_hidden)
+        self.fc3 = nn.Linear(num_hidden, num_hidden)
+        self.fc4 = nn.Linear(num_hidden, 1)
+
+    def energy(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+        sa = torch.cat([x, y], dim=1)
+        x = F.relu(self.fc1(sa))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        energy = self.fc4(x).clamp(LOG_STD_MIN, LOG_STD_MAX)
+        return energy
+
+    def forward(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+        Positive_E = -self.energy(x, y)
+        Positive = torch.exp(Positive_E)
+
+        state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples, self.num_state)
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 2).to(self.device)
+
+        Negative_E = -self.energy(state, noise_action)
+        Negative = torch.exp(Negative_E).view(self.batch_size, self.negative_samples, 1)
+        Negative = torch.sum(Negative, dim=1, keepdim=False)
+
+        out = Positive / (Positive + Negative)
+        return out
