@@ -11,3 +11,4 @@ MUJOCO_LOG.TXT
 d3rlpy_logs
 /CQL
 explore.pth
+/Model
