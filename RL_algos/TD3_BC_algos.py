@@ -108,7 +108,7 @@ class TD3_BC:
                                "Q_pi_loss": critic_loss_pi,
                                "Q_pi_mean": Q_pi_mean,
                                "evaluate_rewards": evaluate_reward,
-                               "it_steps": self.total_it
+                               "it_steps": total_it
                                })
 
             if total_it % 100000 == 0:
