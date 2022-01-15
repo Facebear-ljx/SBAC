@@ -23,6 +23,10 @@ class Energy:
                  alpha=2.5,
                  ratio=1,
                  seed=0,
+                 negative_samples=256,
+                 negative_policy=10,
+                 batch_size=256,
+                 energy_steps=int(5e+5),
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
@@ -40,6 +44,22 @@ class Energy:
         :param device:
         """
         super(Energy, self).__init__()
+
+        # hyper-parameters
+        self.gamma = gamma
+        self.tau = tau
+        self.policy_noise = policy_noise
+        self.policy_freq = policy_freq
+        self.evaluate_freq = 3000
+        self.energy_steps = energy_steps
+        self.noise_clip = noise_clip
+        self.alpha = alpha
+        self.batch_size = batch_size
+        self.device = device
+        self.max_action = 1.
+
+        self.total_it = 0
+
         # prepare the environment
         self.env_name = env_name
         self.env = gym.make(env_name)
@@ -66,22 +86,8 @@ class Energy:
         self.critic_target = copy.deepcopy(self.critic_net)
         self.critic_optim = torch.optim.Adam(self.critic_net.parameters(), lr=3e-4)
 
-        self.ebm = EBM(num_state, num_action, num_hidden, device, 256).float().to(device)
+        self.ebm = EBM(num_state, num_action, num_hidden, device, self.batch_size, negative_samples, negative_policy).float().to(device)
         self.ebm_optim = torch.optim.Adam(self.ebm.parameters(), lr=3e-4)
-
-        # hyper-parameters
-        self.gamma = gamma
-        self.tau = tau
-        self.policy_noise = policy_noise
-        self.policy_freq = policy_freq
-        self.evaluate_freq = 3000
-        self.noise_clip = noise_clip
-        self.alpha = alpha
-        self.batch_size = 256
-        self.device = device
-        self.max_action = 1.
-
-        self.total_it = 0
 
         # Q and Critic file location
         # self.file_loc = prepare_env(env_name)
@@ -101,7 +107,11 @@ class Energy:
             critic_loss_pi = self.train_Q_pi(state, action, next_state, reward, not_done)
 
             # update Energy
-            ebm_loss = self.train_Energy(state, action)
+            if total_it <= self.energy_steps:
+                ebm_loss = self.train_Energy(state, action)
+                # ebm_loss = self.train_strong_Energy(state, action)
+            else:
+                ebm_loss = 0.
 
             # delayed policy update
             if total_it % self.policy_freq == 0:
@@ -118,11 +128,9 @@ class Energy:
                                "evaluate_rewards": evaluate_reward,
                                "it_steps": total_it
                                })
-
+            self.total_it += 1
             # if total_it % 100000 == 0:
             #     self.save_parameters()
-
-        self.total_it = 0
 
     def train_Q_pi(self, state, action, next_state, reward, not_done):
         """
@@ -163,7 +171,11 @@ class Energy:
 
         energy_loss = (self.ebm.energy(state, action_pi) - self.ebm.energy(state, action).detach()).mean()
 
-        actor_loss = -lmbda * Q_pi.mean() + energy_loss
+        if self.total_it >= 500000:
+            actor_loss = - lmbda * Q_pi.mean() + energy_loss
+        else:
+            actor_loss = energy_loss
+        # actor_loss = -Q_pi.mean() + energy_loss
         # actor_loss = energy_loss
         # Optimize Actor
         self.actor_optim.zero_grad()
@@ -184,6 +196,15 @@ class Energy:
 
     def train_Energy(self, state, action):
         probability = self.ebm(state, action)
+        ebm_loss = torch.sum(-torch.log(probability + 1e-5))
+        self.ebm_optim.zero_grad()
+        ebm_loss.backward()
+        self.ebm_optim.step()
+        return ebm_loss.cpu().detach().numpy().item()
+
+    def train_strong_Energy(self, state, action):
+        action_policy = self.actor_net(state).detach()
+        probability = self.ebm.Strong_contrastive(state, action, action_policy)
         ebm_loss = torch.sum(-torch.log(probability + 1e-5))
         self.ebm_optim.zero_grad()
         ebm_loss.backward()

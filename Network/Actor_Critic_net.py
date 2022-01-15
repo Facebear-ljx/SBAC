@@ -572,13 +572,16 @@ class W(nn.Module):
 
 
 class EBM(nn.Module):
-    def __init__(self, num_state, num_action, num_hidden, device, batch_size):
+    def __init__(self, num_state, num_action, num_hidden, device, batch_size, negative_samples, negative_policy=10):
         super(EBM, self).__init__()
         self.device = device
         self.batch_size = batch_size
         self.num_action = num_action
         self.num_state = num_state
-        self.negative_samples = 256
+        self.energy_scale = torch.tensor(10.)
+        self.negative_policy = negative_policy
+        self.negative_samples = negative_samples
+        self.negative_samples_w_policy = int(negative_samples / 2 + negative_policy)
         self.fc1 = nn.Linear(num_state + num_action, num_hidden)
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.fc3 = nn.Linear(num_hidden, num_hidden)
@@ -593,8 +596,35 @@ class EBM(nn.Module):
         x = F.relu(self.fc1(sa))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
-        energy = self.fc4(x).clamp(LOG_STD_MIN, LOG_STD_MAX)
+        energy = torch.tanh(self.fc4(x)) * self.energy_scale
         return energy
+
+    def Strong_contrastive(self, x, y, y_policy):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+        Positive_E = -self.energy(x, y)
+        Positive = torch.exp(Positive_E)
+
+        state = x.unsqueeze(0).repeat(self.negative_samples_w_policy, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples_w_policy, self.num_state)
+
+        y_policy = y_policy.unsqueeze(0).repeat(self.negative_policy, 1, 1)
+        y_policy = y_policy.view(self.batch_size * self.negative_policy, self.num_action)
+
+        noise_action_1 = ((torch.rand([self.batch_size * (self.negative_samples_w_policy - self.negative_policy), self.num_action]) - 0.5) * 2.1).to(self.device)
+        noise_2 = (torch.randn([self.batch_size * self.negative_policy, self.num_action]) * 0.2).clamp(-0.5, 0.5).to(self.device)
+        noise_action_2 = (noise_2 + y_policy).clamp(-1., 1.)
+
+        noise_action = torch.cat([noise_action_1, noise_action_2], dim=0)
+
+        Negative_E = -self.energy(state, noise_action)
+        Negative = torch.exp(Negative_E).view(self.batch_size, self.negative_samples_w_policy, 1)
+        Negative = torch.sum(Negative, dim=1, keepdim=False)
+
+        out = Positive / (Positive + Negative)
+        return out
 
     def forward(self, x, y):
         if isinstance(x, np.ndarray):
@@ -606,7 +636,7 @@ class EBM(nn.Module):
 
         state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         state = state.view(self.batch_size * self.negative_samples, self.num_state)
-        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 2).to(self.device)
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 2.1).to(self.device)
 
         Negative_E = -self.energy(state, noise_action)
         Negative = torch.exp(Negative_E).view(self.batch_size, self.negative_samples, 1)
