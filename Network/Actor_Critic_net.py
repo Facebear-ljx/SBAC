@@ -620,8 +620,8 @@ class EBM(nn.Module):
         noise_action = torch.cat([noise_action_1, noise_action_2], dim=0)
 
         Negative_E = -self.energy(state, noise_action)
-        Negative = torch.exp(Negative_E).view(self.batch_size, self.negative_samples_w_policy, 1)
-        Negative = torch.sum(Negative, dim=1, keepdim=False)
+        Negative = torch.exp(Negative_E).view(self.negative_samples_w_policy, self.batch_size, 1)
+        Negative = torch.sum(Negative, dim=0, keepdim=False)
 
         out = Positive / (Positive + Negative)
         return out
@@ -637,10 +637,11 @@ class EBM(nn.Module):
         state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         state = state.view(self.batch_size * self.negative_samples, self.num_state)
         noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 2.1).to(self.device)
-
+        # noise_action = (torch.ones([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
         Negative_E = -self.energy(state, noise_action)
-        Negative = torch.exp(Negative_E).view(self.batch_size, self.negative_samples, 1)
-        Negative = torch.sum(Negative, dim=1, keepdim=False)
+        Negative = torch.exp(Negative_E).view(self.negative_samples, self.batch_size, 1).sum(0)
+        # Negative = torch.sum(Negative, dim=1, keepdim=False)
+        # Negative = Negative.sum(0)
 
         out = Positive / (Positive + Negative)
         return out

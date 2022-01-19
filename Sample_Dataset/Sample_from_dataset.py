@@ -7,9 +7,12 @@ class ReplayBuffer(object):
         self.max_size = max_size
         self.ptr = 0
         self.size = 0
-        self.s0, self.s1, self.s2, self.s3, self.s4, self.s5, self.s6, self.s7 = np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1)
-        self.a0, self.a1, self.a2, self.a3, self.a4, self.a5, self.a6, self.a7 = np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1)
-        self.d1, self.d2, self.d3, self.d4, self.d5, self.d6, self.d7 = np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1)
+        self.s0, self.s1, self.s2, self.s3, self.s4, self.s5, self.s6, self.s7 = np.zeros(1), np.zeros(1), np.zeros(
+            1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1)
+        self.a0, self.a1, self.a2, self.a3, self.a4, self.a5, self.a6, self.a7 = np.zeros(1), np.zeros(1), np.zeros(
+            1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1)
+        self.d1, self.d2, self.d3, self.d4, self.d5, self.d6, self.d7 = np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(
+            1), np.zeros(1), np.zeros(1), np.zeros(1)
         self.state = np.zeros((max_size, state_dim))
         self.action = np.zeros((max_size, action_dim))
         self.next_state = np.zeros((max_size, state_dim))
@@ -375,27 +378,27 @@ class ReplayBuffer(object):
             len(nonterminal_steps), dataset_size))
 
         self.s0 = dataset['observations'][nonterminal_steps]
-        self.s1 = dataset['observations'][nonterminal_steps+1]
-        self.s2 = dataset['observations'][nonterminal_steps+2]
-        self.s3 = dataset['observations'][nonterminal_steps+3]
-        self.s4 = dataset['observations'][nonterminal_steps+4]
+        self.s1 = dataset['observations'][nonterminal_steps + 1]
+        self.s2 = dataset['observations'][nonterminal_steps + 2]
+        self.s3 = dataset['observations'][nonterminal_steps + 3]
+        self.s4 = dataset['observations'][nonterminal_steps + 4]
         self.s5 = dataset['observations'][nonterminal_steps + 5]
         self.s6 = dataset['observations'][nonterminal_steps + 6]
         self.s7 = dataset['observations'][nonterminal_steps + 7]
 
         self.a0 = dataset['actions'][nonterminal_steps]
-        self.a1 = dataset['actions'][nonterminal_steps+1]
-        self.a2 = dataset['actions'][nonterminal_steps+2]
-        self.a3 = dataset['actions'][nonterminal_steps+3]
-        self.a4 = dataset['actions'][nonterminal_steps+4]
+        self.a1 = dataset['actions'][nonterminal_steps + 1]
+        self.a2 = dataset['actions'][nonterminal_steps + 2]
+        self.a3 = dataset['actions'][nonterminal_steps + 3]
+        self.a4 = dataset['actions'][nonterminal_steps + 4]
         self.a5 = dataset['actions'][nonterminal_steps + 5]
         self.a6 = dataset['actions'][nonterminal_steps + 6]
         self.a7 = dataset['actions'][nonterminal_steps + 7]
 
         self.reward = dataset['rewards'][nonterminal_steps].reshape(-1, 1)
-        self.reward1 = dataset['rewards'][nonterminal_steps+1].reshape(-1, 1)
-        self.reward2 = dataset['rewards'][nonterminal_steps+2].reshape(-1, 1)
-        self.reward3 = dataset['rewards'][nonterminal_steps+3].reshape(-1, 1)
+        self.reward1 = dataset['rewards'][nonterminal_steps + 1].reshape(-1, 1)
+        self.reward2 = dataset['rewards'][nonterminal_steps + 2].reshape(-1, 1)
+        self.reward3 = dataset['rewards'][nonterminal_steps + 3].reshape(-1, 1)
         self.reward4 = dataset['rewards'][nonterminal_steps + 4].reshape(-1, 1)
         self.reward5 = dataset['rewards'][nonterminal_steps + 5].reshape(-1, 1)
         self.reward6 = dataset['rewards'][nonterminal_steps + 6].reshape(-1, 1)

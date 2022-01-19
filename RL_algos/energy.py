@@ -27,6 +27,7 @@ class Energy:
                  negative_policy=10,
                  batch_size=256,
                  energy_steps=int(5e+5),
+                 strong_contrastive=False,
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
@@ -46,6 +47,7 @@ class Energy:
         super(Energy, self).__init__()
 
         # hyper-parameters
+        self.strong_contrastive = strong_contrastive
         self.gamma = gamma
         self.tau = tau
         self.policy_noise = policy_noise
@@ -86,7 +88,8 @@ class Energy:
         self.critic_target = copy.deepcopy(self.critic_net)
         self.critic_optim = torch.optim.Adam(self.critic_net.parameters(), lr=3e-4)
 
-        self.ebm = EBM(num_state, num_action, num_hidden, device, self.batch_size, negative_samples, negative_policy).float().to(device)
+        self.ebm = EBM(num_state, num_action, num_hidden, device, self.batch_size, negative_samples,
+                       negative_policy).float().to(device)
         self.ebm_optim = torch.optim.Adam(self.ebm.parameters(), lr=3e-4)
 
         # Q and Critic file location
@@ -108,14 +111,16 @@ class Energy:
 
             # update Energy
             if total_it <= self.energy_steps:
-                ebm_loss = self.train_Energy(state, action)
-                # ebm_loss = self.train_strong_Energy(state, action)
+                if self.strong_contrastive:
+                    ebm_loss = self.train_strong_Energy(state, action)
+                else:
+                    ebm_loss = self.train_Energy(state, action)
             else:
                 ebm_loss = 0.
 
             # delayed policy update
             if total_it % self.policy_freq == 0:
-                actor_loss, bc_loss, Q_pi_mean, energy = self.train_actor(state, action)
+                actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor(state, action)
 
                 if total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
@@ -125,6 +130,7 @@ class Energy:
                                "Q_pi_loss": critic_loss_pi,
                                "Q_pi_mean": Q_pi_mean,
                                "energy": energy,
+                               "energy_mean": energy_mean,
                                "evaluate_rewards": evaluate_reward,
                                "it_steps": total_it
                                })
@@ -169,14 +175,20 @@ class Energy:
 
         bc_loss = nn.MSELoss()(action_pi, action)
 
-        energy_loss = (self.ebm.energy(state, action_pi) - self.ebm.energy(state, action).detach()).mean()
+        energy = self.ebm.energy(state, action_pi)
+        energy_loss = (energy - self.ebm.energy(state, action).detach()).mean()
+        energy_mean = energy.mean()
+        # warm_up
+        # if self.total_it >= 500000:
+        #     actor_loss = - lmbda * Q_pi.mean() + energy_loss
+        # else:
+        #     actor_loss = energy_loss
 
-        if self.total_it >= 500000:
-            actor_loss = - lmbda * Q_pi.mean() + energy_loss
-        else:
-            actor_loss = energy_loss
+        # no_warm_up
+        actor_loss = -lmbda * Q_pi.mean() + energy_loss
         # actor_loss = -Q_pi.mean() + energy_loss
         # actor_loss = energy_loss
+        # actor_loss = bc_loss
         # Optimize Actor
         self.actor_optim.zero_grad()
         actor_loss.backward()
@@ -192,7 +204,8 @@ class Energy:
         return actor_loss.cpu().detach().numpy().item(), \
                bc_loss.cpu().detach().numpy().item(), \
                Q_pi.mean().cpu().detach().numpy().item(), \
-               energy_loss.cpu().detach().numpy().item()
+               energy_loss.cpu().detach().numpy().item(), \
+               energy_mean.cpu().detach().numpy().item()
 
     def train_Energy(self, state, action):
         probability = self.ebm(state, action)
@@ -223,6 +236,7 @@ class Energy:
             action = self.actor_net(state).cpu().detach().numpy()
             state, reward, done, _ = self.env.step(action)
             ep_rews += reward
+            # self.env.render()
             if done:
                 break
         ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100

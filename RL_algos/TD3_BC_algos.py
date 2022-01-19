@@ -81,7 +81,7 @@ class TD3_BC:
         self.total_it = 0
 
         # Q and Critic file location
-        self.file_loc = prepare_env(env_name)
+        # self.file_loc = prepare_env(env_name)
 
     def learn(self, total_time_step=1e+5):
         """
@@ -111,8 +111,8 @@ class TD3_BC:
                                "it_steps": total_it
                                })
 
-            if total_it % 100000 == 0:
-                self.save_parameters()
+            # if total_it % 100000 == 0:
+            #     self.save_parameters()
 
         self.total_it = 0
 

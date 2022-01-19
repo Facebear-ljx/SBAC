@@ -11,6 +11,7 @@ def main():
     parser = argparse.ArgumentParser(description='Solve the Hopper-v2 with TD3_BC')
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
     parser.add_argument('--env_name', default='hopper-medium-v2', help='choose your mujoco env')
+    parser.add_argument('--alpha', default=2.5, type=float)
     parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
     wandb.config.update(args)
@@ -23,6 +24,7 @@ def main():
     agent_TD3_BC = TD3_BC(env_name=env_name,
                           device=args.device,
                           ratio=1,
+                          alpha=args.alpha
                           # seed=args.seed
                           )
 

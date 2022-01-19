@@ -18,14 +18,15 @@ def main():
     parser.add_argument('--negative_policy', default=10, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
     parser.add_argument('--energy_steps', default=int(1e+6), type=int, help='total iteration steps to train EBM')
+    parser.add_argument('--strong_contrastive', default=True)
     parser.add_argument("--seed", default=seed, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
     wandb.config.update(args)
 
-    # setup mujoco environment and SBAC agent
+    # setup mujoco environment and energy agent
     env_name = args.env_name
     current_time = datetime.datetime.now()
-    wandb.run.name = f"{args.alpha}_{env_name}_{args.negative_samples}"
+    wandb.run.name = f"{args.alpha}_{env_name}_{args.negative_samples}_{args.strong_contrastive}"
 
     agent_Energy = Energy(env_name=env_name,
                           device=args.device,
@@ -35,7 +36,8 @@ def main():
                           negative_samples=args.negative_samples,
                           batch_size=args.batch_size,
                           energy_steps=args.energy_steps,
-                          negative_policy=args.negative_policy
+                          negative_policy=args.negative_policy,
+                          strong_contrastive=args.strong_contrastive
                           )
 
     agent_Energy.learn(total_time_step=int(1e+6))
