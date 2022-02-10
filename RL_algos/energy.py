@@ -10,6 +10,10 @@ from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor_deterministic, Double_Critic, EBM
 from tqdm import tqdm
 
+lmbda_max = 10
+lmbda_min = 0.15
+lmbda_thre =0.
+
 
 class Energy:
     def __init__(self,
@@ -91,6 +95,14 @@ class Energy:
         self.ebm = EBM(num_state, num_action, num_hidden, device, self.batch_size, negative_samples,
                        negative_policy).float().to(device)
         self.ebm_optim = torch.optim.Adam(self.ebm.parameters(), lr=3e-4)
+        AAA = torch.ones(1, num_action).to(device)
+        self.lmbda = torch.tensor(AAA, dtype=torch.float, requires_grad=True)
+        self.lmbda.to(device)
+        self.lmbda_optim = torch.optim.Adam([self.lmbda], lr=1e-2)
+
+        self.auto_alpha = torch.tensor(1., dtype=torch.float, requires_grad=True)
+        self.auto_alpha.to(device)
+        self.auto_alpha_optim = torch.optim.Adam([self.auto_alpha], lr=1e-2)
 
         # Q and Critic file location
         # self.file_loc = prepare_env(env_name)
@@ -120,8 +132,8 @@ class Energy:
 
             # delayed policy update
             if total_it % self.policy_freq == 0:
-                actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor(state, action)
-
+                actor_loss, bc_loss, Q_pi_mean, energy, energy_mean, alpha = self.train_actor_with_auto_alpha(state, action)
+                # actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor(state, action)
                 if total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
                     wandb.log({"actor_loss": actor_loss,
@@ -132,6 +144,8 @@ class Energy:
                                "energy": energy,
                                "energy_mean": energy_mean,
                                "evaluate_rewards": evaluate_reward,
+                               "dual_lmbda": self.lmbda.mean().item(),
+                               "dual_alpha": alpha,
                                "it_steps": total_it
                                })
             self.total_it += 1
@@ -162,6 +176,92 @@ class Energy:
         critic_loss.backward()
         self.critic_optim.step()
         return critic_loss.cpu().detach().numpy().item()
+
+    # KKT reformulation
+    def train_bilevel_actor(self, state, action):
+        """
+                train the learned policy
+                """
+        # Actor loss
+        action_pi = self.actor_net(state)
+        Q_pi = self.critic_net.Q1(state, action_pi)
+
+        lmbda = self.alpha / Q_pi.abs().mean().detach()
+
+        bc_loss = nn.MSELoss()(action_pi, action)
+
+        energy = self.ebm.energy(state, action_pi)
+        energy_mean = energy.mean()
+        de_da = torch.autograd.grad(energy_mean, action_pi, create_graph=True)
+        de_da = de_da[0]
+        self.dual_descent(de_da)
+
+        energy_loss = de_da * self.lmbda  # (+ square)  (+ square + energy_diff)
+        energy_loss = energy_loss.mean()
+        # no_warm_up
+        actor_loss = -lmbda * Q_pi.mean() + energy_loss.mean()
+        # actor_loss = -lmbda * Q_pi.mean() + energy_mean
+        self.actor_optim.zero_grad()
+        actor_loss.backward()
+        self.actor_optim.step()
+
+        # update the frozen target models
+        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return actor_loss.cpu().detach().numpy().item(), \
+               bc_loss.cpu().detach().numpy().item(), \
+               Q_pi.mean().cpu().detach().numpy().item(), \
+               energy_loss.cpu().detach().numpy().item(), \
+               energy_mean.cpu().detach().numpy().item()
+
+    # dual descent
+    def train_bilevel_actor2(self, state, action):
+        """
+                train the learned policy
+                """
+        # Actor loss
+        action_pi = self.actor_net(state)
+        Q_pi = self.critic_net.Q1(state, action_pi)
+
+        lmbda = self.alpha / Q_pi.abs().mean().detach()
+
+        bc_loss = nn.MSELoss()(action_pi, action)
+
+        # no_warm_up
+        actor_loss1 = -lmbda * Q_pi.mean()
+
+        # Optimize Actor
+        self.actor_optim.zero_grad()
+        actor_loss1.backward()
+        self.actor_optim.step()
+
+        # optimize bc actor
+        action_pi = self.actor_net(state)
+        energy = self.ebm.energy(state, action_pi)
+        energy_loss = (energy - self.ebm.energy(state, action).detach()).mean()
+        energy_mean = energy.mean()
+        actor_loss2 = energy_loss
+
+        self.actor_optim.zero_grad()
+        actor_loss2.backward()
+        self.actor_optim.step()
+
+        # update the frozen target models
+        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return actor_loss2.cpu().detach().numpy().item(), \
+               bc_loss.cpu().detach().numpy().item(), \
+               Q_pi.mean().cpu().detach().numpy().item(), \
+               energy_loss.cpu().detach().numpy().item(), \
+               energy_mean.cpu().detach().numpy().item()
 
     def train_actor(self, state, action):
         """
@@ -207,6 +307,63 @@ class Energy:
                energy_loss.cpu().detach().numpy().item(), \
                energy_mean.cpu().detach().numpy().item()
 
+    def train_actor_with_auto_alpha(self, state, action):
+        """
+               train the learned policy
+               """
+        # Actor loss
+        action_pi = self.actor_net(state)
+        Q_pi = self.critic_net.Q1(state, action_pi)
+
+        lmbda = self.alpha / Q_pi.abs().mean().detach()
+
+        bc_loss = nn.MSELoss()(action_pi, action)
+
+        energy = self.ebm.energy(state, action_pi)
+        energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
+
+        self.auto_alpha_update(energy_diff)
+
+        alpha = torch.clip(self.auto_alpha, lmbda_min, lmbda_max)
+        energy_loss = alpha * (energy_diff - lmbda_thre)
+        energy_mean = energy.mean()
+
+        actor_loss = -lmbda * Q_pi.mean() + energy_loss
+        # actor_loss = energy_loss
+        # Optimize Actor
+        self.actor_optim.zero_grad()
+        actor_loss.backward()
+        self.actor_optim.step()
+
+        # update the frozen target models
+        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return actor_loss.cpu().detach().numpy().item(), \
+               bc_loss.cpu().detach().numpy().item(), \
+               Q_pi.mean().cpu().detach().numpy().item(), \
+               energy_diff.cpu().detach().numpy().item(), \
+               energy_mean.cpu().detach().numpy().item(), \
+               alpha.cpu().detach().numpy().item()
+
+    def auto_alpha_update(self, energy_diff):
+        aaa = energy_diff - lmbda_thre
+        alpha_loss = - self.auto_alpha * aaa
+        self.auto_alpha_optim.zero_grad()
+        alpha_loss.backward(retain_graph=True)  # ##########################  here has a bug !!!
+        self.auto_alpha_optim.step()
+        # self.auto_alpha = torch.clamp(self.auto_alpha, lmbda_min, lmbda_max)
+
+    def dual_descent(self, de_da):
+        lmbda_loss = -de_da * self.lmbda
+        lmbda_loss = lmbda_loss.mean()
+        self.lmbda_optim.zero_grad()
+        lmbda_loss.backward(retain_graph=True)
+        self.lmbda_optim.step()
+
     def train_Energy(self, state, action):
         probability = self.ebm(state, action)
         ebm_loss = torch.sum(-torch.log(probability + 1e-5))
@@ -233,6 +390,7 @@ class Energy:
         state = self.env.reset()
         while True:
             state = (state - self.s_mean) / (self.s_std + 1e-5)
+            state = state.squeeze()
             action = self.actor_net(state).cpu().detach().numpy()
             state, reward, done, _ = self.env.step(action)
             ep_rews += reward
