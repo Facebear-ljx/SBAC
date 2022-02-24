@@ -578,7 +578,7 @@ class EBM(nn.Module):
         self.batch_size = batch_size
         self.num_action = num_action
         self.num_state = num_state
-        self.energy_scale = torch.tensor(10.)
+        self.energy_scale = torch.tensor(100.)
         self.negative_policy = negative_policy
         self.negative_samples = negative_samples
         self.negative_samples_w_policy = int(negative_samples / 2 + negative_policy)
@@ -596,6 +596,7 @@ class EBM(nn.Module):
         x = F.relu(self.fc1(sa))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
+        # energy = self.fc4(x)
         energy = torch.tanh(self.fc4(x)) * self.energy_scale
         return energy
 
@@ -636,7 +637,7 @@ class EBM(nn.Module):
 
         state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         state = state.view(self.batch_size * self.negative_samples, self.num_state)
-        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 2.1).to(self.device)
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)  # wtf, noise scale should be larger than the action range
         # noise_action = (torch.ones([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
         Negative_E = -self.energy(state, noise_action)
         Negative = torch.exp(Negative_E).view(self.negative_samples, self.batch_size, 1).sum(0)
@@ -645,3 +646,23 @@ class EBM(nn.Module):
 
         out = Positive / (Positive + Negative)
         return out
+
+    def get_positive_log(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+        Positive_E = -self.energy(x, y)
+        return Positive_E
+
+    def get_negative_log(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+
+        state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples, self.num_state)
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)  # wtf, noise scale should be larger than the action range
+        Negative_E = -self.energy(state, noise_action)
+        Negative = torch.exp(Negative_E).view(self.negative_samples, self.batch_size, 1).sum(0)
+        Negative_log = torch.log(Negative + 1e-5)
+        return Negative_log
