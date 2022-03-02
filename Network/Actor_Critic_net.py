@@ -572,7 +572,7 @@ class W(nn.Module):
 
 
 class EBM(nn.Module):
-    def __init__(self, num_state, num_action, num_hidden, device, batch_size, negative_samples, negative_policy=10):
+    def __init__(self, num_state, num_action, num_hidden, device, batch_size, negative_samples, negative_policy=10, a_max=1, a_min=-1):
         super(EBM, self).__init__()
         self.device = device
         self.batch_size = batch_size
@@ -582,6 +582,10 @@ class EBM(nn.Module):
         self.negative_policy = negative_policy
         self.negative_samples = negative_samples
         self.negative_samples_w_policy = int(negative_samples / 2 + negative_policy)
+
+        self.a_min = a_min
+        self.a_scale = a_max - a_min
+
         self.fc1 = nn.Linear(num_state + num_action, num_hidden)
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.fc3 = nn.Linear(num_hidden, num_hidden)
@@ -638,6 +642,10 @@ class EBM(nn.Module):
         state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         state = state.view(self.batch_size * self.negative_samples, self.num_state)
         noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)  # wtf, noise scale should be larger than the action range
+        # noise_action = (torch.rand([self.batch_size * self.negative_samples, self.num_action]) * self.a_scale * 1.05 + self.a_min).to(
+        #     self.device)
+        # noise_action = (torch.rand([self.batch_size * self.negative_samples, self.num_action]) * (self.a_max - self.a_min)).to(self.device)  ########################
+
         # noise_action = (torch.ones([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
         Negative_E = -self.energy(state, noise_action)
         Negative = torch.exp(Negative_E).view(self.negative_samples, self.batch_size, 1).sum(0)

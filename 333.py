@@ -1,24 +1,11 @@
-import torch
-from Network.Actor_Critic_net import W
+import numpy as np
+import matplotlib.pyplot as plt
 
-w_net = W(1, 2, 'cpu').to('cpu')
-w_optim = torch.optim.SGD(w_net.parameters(), lr=1e-5)
-a = torch.tensor([2], dtype=torch.float, requires_grad=False)
+a = 5.  # shape
+mu, sigma = 0, 1
+s = np.random.normal(mu, sigma, 1000)
+x = np.arange(1, 100.) / 50.
 
-w = w_net(a)
-y = w * w
-
-w_optim.zero_grad()
-y.backward(create_graph=True)
-# w_optim.step()
-a_grad = w_net.parameters().grad
-
-# a_grad_mean = a_grad.mean()
-a_grad_mean = a_grad
-a.grad.data.zero_()
-a_grad.backward()
-
-a_hessian = a.grad
-
-print('a_grad:', a_grad)
-print('a_hessian', a_hessian)
+count, bins, ignored = plt.hist(s, 30, density=True)
+plt.plot(bins, 1/(sigma * np.sqrt(2 * np.pi)) * np.exp(- (bins - mu)**2 / (2 * sigma**2)), linewidth=2, color='r')
+plt.show()

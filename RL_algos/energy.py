@@ -28,7 +28,8 @@ class Energy:
                  batch_size=256,
                  energy_steps=int(5e+5),
                  strong_contrastive=False,
-                 scale_state=True,
+                 scale_state='minmax',
+                 scale_action=True,
                  lmbda_max=100.,
                  lmbda_min=0.15,
                  lmbda_thre=0.,
@@ -68,6 +69,7 @@ class Energy:
         self.lmbda_min = lmbda_min
         self.lmbda_thre = lmbda_thre
         self.scale_state = scale_state
+        self.scale_action = scale_action
         self.total_it = 0
 
         # prepare the environment
@@ -85,8 +87,11 @@ class Energy:
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio)
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False,
-                                                                  scale_state=scale_state)
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(
+            self.dataset,
+            scale_rewards=False,
+            scale_state=scale_state,
+            scale_action=scale_action)
 
         # prepare the actor and critic
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
@@ -143,7 +148,7 @@ class Energy:
                 # actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor_with_auto_alpha_no_normQ(state, action)
                 actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor_with_auto_alpha(state, action)
                 # actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor(state, action)
-                if total_it% self.evaluate_freq == 0:
+                if total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
                     wandb.log({"actor_loss": actor_loss,
                                "bc_loss": bc_loss,
@@ -313,6 +318,8 @@ class Energy:
                """
         # Actor loss
         action_pi = self.actor_net(state)
+
+        # action_pi = (action_pi - torch.tensor(self.a_mean).to(self.device)) / torch.tensor(self.a_std + 1e-3).to(self.device)
         Q_pi = self.critic_net.Q1(state, action_pi)
 
         lmbda = self.alpha / Q_pi.abs().mean().detach()
@@ -439,15 +446,21 @@ class Energy:
         ep_rews = 0.
         for i in range(10):
             while True:
-                if self.scale_state:
+                if self.scale_state == 'standard':
                     state = (state - self.s_mean) / (self.s_std + 1e-5)
+                elif self.scale_state == 'minmax':
+                    state = (state - self.s_mean) / (self.s_std - self.s_mean)
                 state = state.squeeze()
                 action = self.actor_net(state).cpu().detach().numpy()
+
+                # if self.scale_action:
+                #     action = action * (self.a_std + 1e-3) + self.a_mean
                 # noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
                 # action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward
-                # self.env.render()
+                # if self.total_it >= 100000 and i == 9:
+                #     self.env.render()
                 if done:
                     state = self.env.reset()
                     break

@@ -219,7 +219,7 @@ class ReplayBuffer(object):
             'terminals': np.array(done_),
         }
 
-    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False):
+    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False, scale_action=False):
         """
         convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
         :param scale_action:
@@ -257,12 +257,43 @@ class ReplayBuffer(object):
         s_mean = self.state.mean(0, keepdims=True)
         s_std = self.state.std(0, keepdims=True)
 
-        # standard normalization
-        if scale_state:
+        s_min = self.state.min(0, keepdims=True)
+        s_max = self.state.max(0, keepdims=True)
+
+        a_mean = self.action.mean(0, keepdims=True)
+        a_std = self.action.std(0, keepdims=True)
+
+        if scale_state == 'minmax':
+            # min_max normalization
+            self.state = (self.state - s_min) / (s_max - s_min)
+            self.next_state = (self.next_state - s_min) / (s_max - s_min)
+            if scale_action:
+                self.action = (self.action - a_mean) / (a_std + 1e-3)
+                self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
+                return s_min, s_max, a_mean, a_std
+            else:
+                return s_min, s_max
+
+        elif scale_state == 'standard':
+            # standard normalization
             self.state = (self.state - s_mean) / (s_std + 1e-3)
             self.next_state = (self.next_state - s_mean) / (s_std + 1e-3)
+            if scale_action:
+                self.action = (self.action - a_mean) / (a_std + 1e-3)
+                self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
+                a_max = self.action.max(0, keepdims=True)
+                a_min = self.action.min(0, keepdims=True)
+                return s_mean, s_std, a_mean, a_std, a_max, a_min
+            else:
+                return s_mean, s_std
 
-        return s_mean, s_std
+        else:
+            if scale_action:
+                self.action = (self.action - a_mean) / (a_std + 1e-3)
+                self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
+                return s_mean, s_std, a_mean, a_std
+            else:
+                return s_mean, s_std
 
     def convert_D4RL_td_lambda(self, dataset, scale_rewards=False, scale_state=False, n=1):
         """
