@@ -138,8 +138,9 @@ class Energy:
                 if self.strong_contrastive:
                     ebm_loss = self.train_strong_Energy(state, action)
                 else:
-                    ebm_loss = self.train_Energy_SQIL(state, action, next_state)
+                    # ebm_loss = self.train_Energy_SQIL(state, action, next_state)
                     # ebm_loss = 0.
+                    ebm_loss = self.train_Distance(state, action)
             else:
                 ebm_loss = 0.
 
@@ -178,7 +179,7 @@ class Energy:
             # Compute the target Q value
             target_Q1, target_Q2 = self.critic_target(next_state, next_action)
             target_Q = torch.min(target_Q1, target_Q2)
-            target_Q = reward + not_done * self.gamma * target_Q
+            target_Q = reward + not_done * self.gamma * target_Q - 1.
 
         Q1, Q2 = self.critic_net(state, action)
 
@@ -190,92 +191,6 @@ class Energy:
         critic_loss.backward()
         self.critic_optim.step()
         return critic_loss.cpu().detach().numpy().item()
-
-    # KKT reformulation
-    def train_bilevel_actor(self, state, action):
-        """
-                train the learned policy
-                """
-        # Actor loss
-        action_pi = self.actor_net(state)
-        Q_pi = self.critic_net.Q1(state, action_pi)
-
-        lmbda = self.alpha / Q_pi.abs().mean().detach()
-
-        bc_loss = nn.MSELoss()(action_pi, action)
-
-        energy = self.ebm.energy(state, action_pi)
-        energy_mean = energy.mean()
-        de_da = torch.autograd.grad(energy_mean, action_pi, create_graph=True)
-        de_da = de_da[0]
-        self.dual_descent(de_da)
-
-        energy_loss = de_da * self.lmbda  # (+ square)  (+ square + energy_diff)
-        energy_loss = energy_loss.mean()
-        # no_warm_up
-        actor_loss = -lmbda * Q_pi.mean() + energy_loss.mean()
-        # actor_loss = -lmbda * Q_pi.mean() + energy_mean
-        self.actor_optim.zero_grad()
-        actor_loss.backward()
-        self.actor_optim.step()
-
-        # update the frozen target models
-        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        return actor_loss.cpu().detach().numpy().item(), \
-               bc_loss.cpu().detach().numpy().item(), \
-               Q_pi.mean().cpu().detach().numpy().item(), \
-               energy_loss.cpu().detach().numpy().item(), \
-               energy_mean.cpu().detach().numpy().item()
-
-    # dual descent
-    def train_bilevel_actor2(self, state, action):
-        """
-                train the learned policy
-                """
-        # Actor loss
-        action_pi = self.actor_net(state)
-        Q_pi = self.critic_net.Q1(state, action_pi)
-
-        lmbda = self.alpha / Q_pi.abs().mean().detach()
-
-        bc_loss = nn.MSELoss()(action_pi, action)
-
-        # no_warm_up
-        actor_loss1 = -lmbda * Q_pi.mean()
-
-        # Optimize Actor
-        self.actor_optim.zero_grad()
-        actor_loss1.backward()
-        self.actor_optim.step()
-
-        # optimize bc actor
-        action_pi = self.actor_net(state)
-        energy = self.ebm.energy(state, action_pi)
-        energy_loss = (energy - self.ebm.energy(state, action).detach()).mean()
-        energy_mean = energy.mean()
-        actor_loss2 = energy_loss
-
-        self.actor_optim.zero_grad()
-        actor_loss2.backward()
-        self.actor_optim.step()
-
-        # update the frozen target models
-        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        return actor_loss2.cpu().detach().numpy().item(), \
-               bc_loss.cpu().detach().numpy().item(), \
-               Q_pi.mean().cpu().detach().numpy().item(), \
-               energy_loss.cpu().detach().numpy().item(), \
-               energy_mean.cpu().detach().numpy().item()
 
     def train_actor(self, state, action):
         """
@@ -437,6 +352,15 @@ class Energy:
         self.ebm_optim.step()
         return ebm_loss.cpu().detach().numpy().item()
 
+    def train_Distance(self, state, action):
+        predict, label, predict2, label2 = self.ebm.linear_distance(state, action)
+        ebm_loss = nn.MSELoss()(predict, label) + nn.MSELoss()(predict2, label2) * 10
+
+        self.ebm_optim.zero_grad()
+        ebm_loss.backward()
+        self.ebm_optim.step()
+        return ebm_loss.cpu().detach().numpy().item()
+
     def rollout_evaluate(self):
         """
         policy evaluation function
@@ -451,12 +375,12 @@ class Energy:
                 elif self.scale_state == 'minmax':
                     state = (state - self.s_mean) / (self.s_std - self.s_mean)
                 state = state.squeeze()
-                action = self.actor_net(state).cpu().detach().numpy()
+                action = self.actor_net(state).cpu().detach()
 
                 # if self.scale_action:
                 #     action = action * (self.a_std + 1e-3) + self.a_mean
-                # noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
-                # action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
+                noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
+                action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward
                 # if self.total_it >= 100000 and i == 9:

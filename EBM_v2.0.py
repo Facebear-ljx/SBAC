@@ -43,16 +43,16 @@ class EBM(nn.Module):
         self.negative_samples = negative_samples
         self.negative_samples_w_policy = int(negative_samples / 2 + negative_policy)
         self.fc1 = nn.Linear(num_state + num_action, num_hidden)
-        self.fc1 = nn.utils.spectral_norm(self.fc1)
+        # self.fc1 = nn.utils.spectral_norm(self.fc1)
 
         self.fc2 = nn.Linear(num_hidden, num_hidden)
-        self.fc2 = nn.utils.spectral_norm(self.fc2)
+        # self.fc2 = nn.utils.spectral_norm(self.fc2)
 
         self.fc3 = nn.Linear(num_hidden, num_hidden)
-        self.fc3 = nn.utils.spectral_norm(self.fc3)
+        # self.fc3 = nn.utils.spectral_norm(self.fc3)
 
         self.fc4 = nn.Linear(num_hidden, 1)
-        self.fc4 = nn.utils.spectral_norm(self.fc4)
+        # self.fc4 = nn.utils.spectral_norm(self.fc4)
 
     def energy(self, x, y):
         if isinstance(x, np.ndarray):
@@ -108,17 +108,24 @@ class EBM(nn.Module):
         # Positive = Positive_E
         state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         state = state.view(self.batch_size * self.negative_samples, self.num_state)
+
+        action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        action = action.view(self.batch_size * self.negative_samples, self.num_action)
+
         noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 2.5).to(
             self.device)  # wtf, noise scale should be larger than the action range
         # noise_action = (torch.ones([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
-        Negative_E = -self.energy(state, noise_action)
+        noise_diff = noise_action - action
+        norm = torch.norm(noise_diff, dim=1, keepdim=True)
+        NE = self.energy(state, noise_action)
+        Negative_E = -NE
         # Negative = Negative_E.view(self.negative_samples, self.batch_size, 1).sum(0)
         Negative = torch.exp(Negative_E).view(self.negative_samples, self.batch_size, 1).sum(0)
         # Negative = torch.sum(Negative, dim=1, keepdim=False)
         # Negative = Negative.sum(0)
 
         out = Positive / (Positive + Negative)
-        return out
+        return out, NE, norm
 
 
 # class EBM(nn.Module):
@@ -152,7 +159,7 @@ class EBM(nn.Module):
 
 model = EBM(batch_size=1500, num_state=1, num_action=1, num_hidden=256, device='cuda', negative_samples=10).to(device)
 model2 = EBM(batch_size=1500, num_state=1, num_action=1, num_hidden=256, device='cuda', negative_samples=20).to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
 # schedule = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=(1-5e-4))
 # schedule = torch.optim.lr_scheduler.ConstantLR(optimizer, factor=0.5, total_iters=5)
@@ -171,18 +178,18 @@ fig = plt.figure()
 ax = Axes3D(fig)
 
 # train and plot
-pbar = tqdm(range(30000))
+pbar = tqdm(range(10000))
 for i in pbar:
     x_input, y_input = x_circles.to(device), y_circles.to(device)
     # x_input2, y_input2 = x_circles.to(device), y_circles.to(device)
-    predict = model(x_input, y_input)
+    predict, NE, label = model(x_input, y_input)
     # predict2 = model2(x_input2, y_input2)
     y_input.requires_grad = True
     de_da = torch.autograd.grad(model.energy(x_input, y_input).sum(), y_input, create_graph=True)
     de_da = de_da[0].abs()
     de_da = de_da.sum()
 
-    loss = torch.sum(-torch.log(predict))# + de_da
+    loss = torch.sum(-torch.log(predict)) + 0.1 * nn.MSELoss()(NE, label)
     # loss2 = torch.sum(-torch.log(predict2))
     optimizer.zero_grad()
     # optimizer2.zero_grad()

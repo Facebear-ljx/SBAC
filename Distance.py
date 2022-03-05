@@ -73,8 +73,105 @@ class EBM(nn.Module):
         if isinstance(y, np.ndarray):
             y = torch.tensor(y, dtype=torch.float).to(self.device)
 
+        state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples, self.num_state)
+
+        action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        action = action.view(self.batch_size * self.negative_samples, self.num_action)
+
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(
+            self.device)
+
+        noise2 = (torch.randn([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
+
+        noise_action2 = noise2 + action
+
+        noise_diff = noise_action - action
+        norm = torch.norm(noise_diff, dim=1, keepdim=True)
+        # norm2 = torch.norm(noise2, dim=1, keepdim=True)
+        norm2 = torch.zeros_like(norm)
+
+        output = self.energy(state, noise_action)
+        output2 = self.energy(state, action)
+        label = norm
+        return output, label, output2, norm2
+
+    def forward(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+
+        state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples, self.num_state)
+
+        action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        action = action.view(self.batch_size * self.negative_samples, self.num_action)
+
+        noise = (torch.randn([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
+        norm = torch.norm(noise, dim=1, keepdim=True)
+
+        noise_action = noise + action
+        output = self.energy(state, noise_action)
+        label = F.softplus(norm) * 100
+        return output, label
+
+
+class EBM2(nn.Module):
+    def __init__(self, num_state, num_action, num_hidden, device, batch_size, negative_samples, negative_policy=10):
+        super(EBM2, self).__init__()
+        self.device = device
+        self.batch_size = batch_size
+        self.num_action = num_action
+        self.num_state = num_state
+        self.energy_scale = torch.tensor(50.)
+        self.negative_policy = negative_policy
+        self.negative_samples = negative_samples
+        self.negative_samples_w_policy = int(negative_samples / 2 + negative_policy)
+        self.fc1 = nn.Linear(num_state, num_hidden)
+        self.fc2 = nn.Linear(num_action, num_hidden)
+        # self.fc1 = nn.utils.spectral_norm(self.fc1)
+
+        self.fc3 = nn.Linear(num_hidden, num_hidden)
+        # self.fc2 = nn.utils.spectral_norm(self.fc2)
+
+        self.fc4 = nn.Linear(num_hidden, num_hidden)
+        # self.fc3 = nn.utils.spectral_norm(self.fc3)
+
+        self.fc5 = nn.Linear(num_hidden, num_hidden)
+        # self.fc2 = nn.utils.spectral_norm(self.fc2)
+
+        self.fc6 = nn.Linear(num_hidden, num_hidden)
+
+        self.fc7 = nn.Linear(num_hidden + num_hidden, 1)
+        # self.fc4 = nn.utils.spectral_norm(self.fc4)
+
+    def energy(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc3(x))
+        x = F.relu(self.fc4(x))
+
+        y = F.relu(self.fc2(y))
+        y = F.relu(self.fc5(y))
+        y = F.relu(self.fc6(y))
+
+        xx = torch.cat([x, y], dim=1)
+        energy = self.fc7(xx)
+        energy = F.softplus(energy)
+        return energy
+
+    def distance(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+
         noise_scale = (torch.randn([self.batch_size, 1])).to(self.device)
-        noise = (torch.rand([self.batch_size, self.num_action])-0.5).to(self.device)
+        noise = (torch.rand([self.batch_size, self.num_action]) - 0.5).to(self.device)
         norm = torch.norm(noise, dim=1, keepdim=True)
         noise = noise / norm
         noise = noise * noise_scale
@@ -91,22 +188,23 @@ class EBM(nn.Module):
         if isinstance(y, np.ndarray):
             y = torch.tensor(y, dtype=torch.float).to(self.device)
 
-        noise_scale = abs(torch.randn([self.batch_size, self.num_action])).to(self.device)
-        noise = (torch.rand([self.batch_size, self.num_action])-0.5).to(self.device)
-        norm = torch.norm(noise, dim=1, keepdim=True) + 1e-3
-        noise = noise / norm
-        noise = noise * noise_scale
+        state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples, self.num_state)
 
-        # noise = torch.cat([noise_1, noise_2], dim=0)
-        noise_action = noise + y
-        output = self.energy(x, noise_action)
-        # label = torch.clip(noise_scale, min=1) * 10
-        label = F.softplus(noise_scale - 1) * 20
+        action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        action = action.view(self.batch_size * self.negative_samples, self.num_action)
+
+        noise = (torch.randn([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
+        norm = torch.norm(noise, dim=1, keepdim=True)
+
+        noise_action = noise + action
+        output = self.energy(state, noise_action)
+        label = F.softplus(norm - 1) * 20
         return output, label
 
 
 model = EBM(batch_size=1500, num_state=1, num_action=1, num_hidden=256, device='cuda', negative_samples=10).to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
 # schedule = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=(1-5e-4))
 # schedule = torch.optim.lr_scheduler.ConstantLR(optimizer, factor=0.5, total_iters=5)
@@ -124,17 +222,17 @@ fig = plt.figure()
 ax = Axes3D(fig)
 
 # train and plot
-pbar = tqdm(range(10000))
+pbar = tqdm(range(20000))
 for i in pbar:
-    x_input, y_input = x_moons.to(device), y_moons.to(device)
-    predict, label = model(x_input, y_input)
+    x_input, y_input = x_circles.to(device), y_circles.to(device)
+    predict, label, predict2, label2 = model.distance(x_input, y_input)
     y_input.requires_grad = True
     de_da = torch.autograd.grad(model.energy(x_input, y_input).sum(), y_input, create_graph=True)
     de_da = de_da[0].abs()
     de_da = de_da.sum()
 
     # loss = torch.sum(-torch.log(predict))# + de_da
-    loss = nn.MSELoss()(predict, label)
+    loss = nn.MSELoss()(predict, label) + nn.MSELoss()(predict2, label2) * 0.1
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()

@@ -631,6 +631,52 @@ class EBM(nn.Module):
         out = Positive / (Positive + Negative)
         return out
 
+    def linear_distance(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+
+        state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples, self.num_state)
+
+        action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        action = action.view(self.batch_size * self.negative_samples, self.num_action)
+
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)
+        noise = noise_action - action
+        norm = torch.norm(noise, dim=1, keepdim=True)
+
+        noise2 = (torch.randn([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
+        noise_action2 = noise2 + action
+        norm2 = torch.norm(noise2, dim=1, keepdim=True)
+
+        output = self.energy(state, noise_action)
+        output2 = self.energy(state, noise_action2)
+        label = norm
+        label2 = norm2
+        return output, label, output2, label2
+
+    def distance(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+
+        state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples, self.num_state)
+
+        action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        action = action.view(self.batch_size * self.negative_samples, self.num_action)
+
+        noise = (torch.randn([self.batch_size * self.negative_samples, self.num_action])*0.5).to(self.device)
+        norm = torch.norm(noise, dim=1, keepdim=True)
+
+        noise_action = noise + action
+        output = self.energy(state, noise_action)
+        label = F.softplus(norm * 2) * 10
+        return output, label
+
     def forward(self, x, y):
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
