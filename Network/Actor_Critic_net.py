@@ -604,33 +604,6 @@ class EBM(nn.Module):
         energy = torch.tanh(self.fc4(x)) * self.energy_scale
         return energy
 
-    def Strong_contrastive(self, x, y, y_policy):
-        if isinstance(x, np.ndarray):
-            x = torch.tensor(x, dtype=torch.float).to(self.device)
-        if isinstance(y, np.ndarray):
-            y = torch.tensor(y, dtype=torch.float).to(self.device)
-        Positive_E = -self.energy(x, y)
-        Positive = torch.exp(Positive_E)
-
-        state = x.unsqueeze(0).repeat(self.negative_samples_w_policy, 1, 1)
-        state = state.view(self.batch_size * self.negative_samples_w_policy, self.num_state)
-
-        y_policy = y_policy.unsqueeze(0).repeat(self.negative_policy, 1, 1)
-        y_policy = y_policy.view(self.batch_size * self.negative_policy, self.num_action)
-
-        noise_action_1 = ((torch.rand([self.batch_size * (self.negative_samples_w_policy - self.negative_policy), self.num_action]) - 0.5) * 2.1).to(self.device)
-        noise_2 = (torch.randn([self.batch_size * self.negative_policy, self.num_action]) * 0.2).clamp(-0.5, 0.5).to(self.device)
-        noise_action_2 = (noise_2 + y_policy).clamp(-1., 1.)
-
-        noise_action = torch.cat([noise_action_1, noise_action_2], dim=0)
-
-        Negative_E = -self.energy(state, noise_action)
-        Negative = torch.exp(Negative_E).view(self.negative_samples_w_policy, self.batch_size, 1)
-        Negative = torch.sum(Negative, dim=0, keepdim=False)
-
-        out = Positive / (Positive + Negative)
-        return out
-
     def linear_distance(self, x, y):
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
@@ -647,15 +620,9 @@ class EBM(nn.Module):
         noise = noise_action - action
         norm = torch.norm(noise, dim=1, keepdim=True)
 
-        noise2 = (torch.randn([self.batch_size * self.negative_samples, self.num_action])).to(self.device)
-        noise_action2 = noise2 + action
-        norm2 = torch.norm(noise2, dim=1, keepdim=True)
-
         output = self.energy(state, noise_action)
-        output2 = self.energy(state, noise_action2)
         label = norm
-        label2 = norm2
-        return output, label, output2, label2
+        return output, label
 
     def distance(self, x, y):
         if isinstance(x, np.ndarray):

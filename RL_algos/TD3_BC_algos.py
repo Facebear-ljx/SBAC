@@ -55,7 +55,7 @@ class TD3_BC:
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio)
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state=True)
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state='standard')
 
         # prepare the actor and critic
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
@@ -176,16 +176,30 @@ class TD3_BC:
         policy evaluation function
         :return: the evaluation result
         """
-        ep_rews = 0.
         state = self.env.reset()
-        while True:
-            state = (state - self.s_mean) / (self.s_std + 1e-5)
-            action = self.actor_net(state).cpu().detach().numpy()
-            state, reward, done, _ = self.env.step(action)
-            ep_rews += reward
-            if done:
-                break
-        ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100
+        ep_rews = 0.
+        for i in range(10):
+            while True:
+                # if self.scale_state == 'standard':
+                #     state = (state - self.s_mean) / (self.s_std + 1e-5)
+                # elif self.scale_state == 'minmax':
+                #     state = (state - self.s_mean) / (self.s_std - self.s_mean)
+                state = state.squeeze()
+                action = self.actor_net(state).cpu().detach()
+
+                # if self.scale_action:
+                #     action = action * (self.a_std + 1e-3) + self.a_mean
+                noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
+                action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
+                state, reward, done, _ = self.env.step(action)
+                ep_rews += reward
+                # if self.total_it >= 100000 and i == 9:
+                #     self.env.render()
+                if done:
+                    state = self.env.reset()
+                    break
+        ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100 / 10.
+        print('reward:', ep_rews)
         return ep_rews
 
     def save_parameters(self):

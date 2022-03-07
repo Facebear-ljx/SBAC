@@ -34,6 +34,8 @@ class Energy:
                  lmbda_min=0.15,
                  lmbda_thre=0.,
                  lr_ebm=1e-7,
+                 lr_actor=3e-4,
+                 lr_critic=3e-4,
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
@@ -96,11 +98,11 @@ class Energy:
         # prepare the actor and critic
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
         self.actor_target = copy.deepcopy(self.actor_net)
-        self.actor_optim = torch.optim.Adam(self.actor_net.parameters(), lr=3e-4)
+        self.actor_optim = torch.optim.Adam(self.actor_net.parameters(), lr=lr_actor)
 
         self.critic_net = Double_Critic(num_state, num_action, num_hidden, device).float().to(device)
         self.critic_target = copy.deepcopy(self.critic_net)
-        self.critic_optim = torch.optim.Adam(self.critic_net.parameters(), lr=3e-4)
+        self.critic_optim = torch.optim.Adam(self.critic_net.parameters(), lr=lr_critic)
 
         self.ebm = EBM(num_state, num_action, 256, device, self.batch_size, negative_samples,
                        negative_policy).float().to(device)
@@ -135,20 +137,13 @@ class Energy:
 
             # update Energy
             if total_it <= self.energy_steps:
-                if self.strong_contrastive:
-                    ebm_loss = self.train_strong_Energy(state, action)
-                else:
-                    # ebm_loss = self.train_Energy_SQIL(state, action, next_state)
-                    # ebm_loss = 0.
-                    ebm_loss = self.train_Distance(state, action)
+                ebm_loss = self.train_Distance(state, action)
             else:
                 ebm_loss = 0.
 
             # delayed policy update
             if total_it % self.policy_freq == 0:
-                # actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor_with_auto_alpha_no_normQ(state, action)
                 actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor_with_auto_alpha(state, action)
-                # actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor(state, action)
                 if total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
                     wandb.log({"actor_loss": actor_loss,
@@ -192,41 +187,6 @@ class Energy:
         self.critic_optim.step()
         return critic_loss.cpu().detach().numpy().item()
 
-    def train_actor(self, state, action):
-        """
-        train the learned policy
-        """
-        # Actor loss
-        action_pi = self.actor_net(state)
-        Q_pi = self.critic_net.Q1(state, action_pi)
-
-        lmbda = self.alpha / Q_pi.abs().mean().detach()
-
-        bc_loss = nn.MSELoss()(action_pi, action)
-
-        energy = self.ebm.energy(state, action_pi)
-        energy_loss = (energy - self.ebm.energy(state, action).detach()).mean()
-        energy_mean = energy.mean()
-
-        # no_warm_up
-        actor_loss = -lmbda * Q_pi.mean() + energy_loss
-        self.actor_optim.zero_grad()
-        actor_loss.backward()
-        self.actor_optim.step()
-
-        # update the frozen target models
-        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        return actor_loss.cpu().detach().numpy().item(), \
-               bc_loss.cpu().detach().numpy().item(), \
-               Q_pi.mean().cpu().detach().numpy().item(), \
-               energy_loss.cpu().detach().numpy().item(), \
-               energy_mean.cpu().detach().numpy().item()
-
     def train_actor_with_auto_alpha(self, state, action):
         """
                train the learned policy
@@ -234,7 +194,6 @@ class Energy:
         # Actor loss
         action_pi = self.actor_net(state)
 
-        # action_pi = (action_pi - torch.tensor(self.a_mean).to(self.device)) / torch.tensor(self.a_std + 1e-3).to(self.device)
         Q_pi = self.critic_net.Q1(state, action_pi)
 
         lmbda = self.alpha / Q_pi.abs().mean().detach()
@@ -248,46 +207,7 @@ class Energy:
         energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
         energy_mean = energy.mean()
 
-        # actor_loss = bc_loss
         actor_loss = -lmbda * Q_pi.mean() + energy_loss
-        # actor_loss = energy_loss
-        # Optimize Actor
-        self.actor_optim.zero_grad()
-        actor_loss.backward()
-        self.actor_optim.step()
-
-        # update the frozen target models
-        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        return actor_loss.cpu().detach().numpy().item(), \
-               bc_loss.cpu().detach().numpy().item(), \
-               Q_pi.mean().cpu().detach().numpy().item(), \
-               energy_diff.cpu().detach().numpy().item(), \
-               energy_mean.cpu().detach().numpy().item()
-
-    def train_actor_with_auto_alpha_no_normQ(self, state, action):
-        """
-               train the learned policy
-               """
-        # Actor loss
-        action_pi = self.actor_net(state)
-        Q_pi = self.critic_net.Q1(state, action_pi)
-
-        bc_loss = nn.MSELoss()(action_pi, action)
-
-        energy = self.ebm.energy(state, action_pi)
-        energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
-
-        self.auto_alpha_update(energy_diff)
-        energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
-        energy_mean = energy.mean()
-
-        # actor_loss = - Q_pi.mean() + energy_loss
-        actor_loss = energy_loss
         # Optimize Actor
         self.actor_optim.zero_grad()
         actor_loss.backward()
@@ -320,41 +240,9 @@ class Energy:
         lmbda_loss.backward(retain_graph=True)
         self.lmbda_optim.step()
 
-    def train_Energy(self, state, action):
-        probability = self.ebm(state, action)
-        ebm_loss = torch.sum(-torch.log(probability + 1e-5))
-        self.ebm_optim.zero_grad()
-        ebm_loss.backward()
-        self.ebm_optim.step()
-        return ebm_loss.cpu().detach().numpy().item()
-
-    def train_strong_Energy(self, state, action):
-        action_policy = self.actor_net(state).detach()
-        probability = self.ebm.Strong_contrastive(state, action, action_policy)
-        ebm_loss = torch.sum(-torch.log(probability + 1e-5))
-        self.ebm_optim.zero_grad()
-        ebm_loss.backward()
-        self.ebm_optim.step()
-        return ebm_loss.cpu().detach().numpy().item()
-
-    def train_Energy_SQIL(self, state, action, next_state):
-        probability = self.ebm(state, action)
-        mle_loss = torch.sum(-torch.log(probability + 1e-5))
-
-        positive_log_reg = self.ebm.get_positive_log(state, action)
-        negative_log_reg = self.ebm.get_negative_log(next_state)
-        reg_loss = (positive_log_reg - self.gamma * negative_log_reg) ** 2
-        reg_loss = reg_loss.mean()
-
-        ebm_loss = mle_loss + reg_loss * 0.1
-        self.ebm_optim.zero_grad()
-        ebm_loss.backward()
-        self.ebm_optim.step()
-        return ebm_loss.cpu().detach().numpy().item()
-
     def train_Distance(self, state, action):
-        predict, label, predict2, label2 = self.ebm.linear_distance(state, action)
-        ebm_loss = nn.MSELoss()(predict, label) + nn.MSELoss()(predict2, label2) * 10
+        predict, label = self.ebm.linear_distance(state, action)
+        ebm_loss = nn.MSELoss()(predict, label)
 
         self.ebm_optim.zero_grad()
         ebm_loss.backward()
@@ -375,12 +263,10 @@ class Energy:
                 elif self.scale_state == 'minmax':
                     state = (state - self.s_mean) / (self.s_std - self.s_mean)
                 state = state.squeeze()
-                action = self.actor_net(state).cpu().detach()
+                action = self.actor_net(state).cpu().detach().numpy()
 
-                # if self.scale_action:
-                #     action = action * (self.a_std + 1e-3) + self.a_mean
-                noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
-                action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
+                # noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
+                # action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward
                 # if self.total_it >= 100000 and i == 9:
