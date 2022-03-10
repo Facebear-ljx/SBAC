@@ -204,7 +204,7 @@ class EBM2(nn.Module):
 
 
 model = EBM(batch_size=1500, num_state=1, num_action=1, num_hidden=256, device='cuda', negative_samples=10).to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
 # schedule = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=(1-5e-4))
 # schedule = torch.optim.lr_scheduler.ConstantLR(optimizer, factor=0.5, total_iters=5)
@@ -222,9 +222,9 @@ fig = plt.figure()
 ax = Axes3D(fig)
 
 # train and plot
-pbar = tqdm(range(20000))
+pbar = tqdm(range(10000))
 for i in pbar:
-    x_input, y_input = x_circles.to(device), y_circles.to(device)
+    x_input, y_input = x_moons.to(device), y_moons.to(device)
     predict, label, predict2, label2 = model.distance(x_input, y_input)
     y_input.requires_grad = True
     de_da = torch.autograd.grad(model.energy(x_input, y_input).sum(), y_input, create_graph=True)
@@ -232,7 +232,7 @@ for i in pbar:
     de_da = de_da.sum()
 
     # loss = torch.sum(-torch.log(predict))# + de_da
-    loss = nn.MSELoss()(predict, label) + nn.MSELoss()(predict2, label2) * 0.1
+    loss = nn.MSELoss()(predict, label) + nn.MSELoss()(predict2, label2) * 0.0
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()

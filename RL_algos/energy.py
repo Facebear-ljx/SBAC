@@ -89,9 +89,13 @@ class Energy:
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio)
+        if 'antmaze' in env_name:
+            scale_rewards = True
+        else:
+            scale_rewards = False
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(
             self.dataset,
-            scale_rewards=False,
+            scale_rewards=scale_rewards,
             scale_state=scale_state,
             scale_action=scale_action)
 
@@ -108,16 +112,18 @@ class Energy:
                        negative_policy).float().to(device)
         self.ebm_optim = torch.optim.Adam(self.ebm.parameters(), lr=lr_ebm)
         AAA = torch.ones(1, num_action).to(device)
+        AAA = AAA * 5.
         self.lmbda = torch.tensor(AAA, dtype=torch.float, requires_grad=True)
         self.lmbda.to(device)
+        # self.lmbda = self.lmbda * 5.
         self.lmbda_optim = torch.optim.Adam([self.lmbda], lr=1e-2)
         self.all_returns = []
 
         # self.auto_alpha = torch.tensor(1., dtype=torch.float, requires_grad=True)
         # self.auto_alpha.to(device)
         # self.auto_alpha_optim = torch.optim.Adam([self.auto_alpha], lr=1e-1)
-        self.auto_alpha = torch.tensor(1.)
-        self.dual_step_size = torch.tensor(1e-3)
+        self.auto_alpha = torch.tensor(5.)
+        self.dual_step_size = torch.tensor(1e-4)
         # Q and Critic file location
         # self.file_loc = prepare_env(env_name)
 
@@ -174,7 +180,7 @@ class Energy:
             # Compute the target Q value
             target_Q1, target_Q2 = self.critic_target(next_state, next_action)
             target_Q = torch.min(target_Q1, target_Q2)
-            target_Q = reward + not_done * self.gamma * target_Q - 1.
+            target_Q = reward + not_done * self.gamma * target_Q
 
         Q1, Q2 = self.critic_net(state, action)
 
@@ -206,6 +212,48 @@ class Energy:
         self.auto_alpha_update(energy_diff)
         energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
         energy_mean = energy.mean()
+
+        actor_loss = -lmbda * Q_pi.mean() + energy_loss
+        # Optimize Actor
+        self.actor_optim.zero_grad()
+        actor_loss.backward()
+        self.actor_optim.step()
+
+        # update the frozen target models
+        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return actor_loss.cpu().detach().numpy().item(), \
+               bc_loss.cpu().detach().numpy().item(), \
+               Q_pi.mean().cpu().detach().numpy().item(), \
+               energy_diff.cpu().detach().numpy().item(), \
+               energy_mean.cpu().detach().numpy().item()
+
+    def train_actor_with_bilevel(self, state, action):
+        """
+               train the learned policy
+               """
+        # Actor loss
+        action_pi = self.actor_net(state)
+
+        Q_pi = self.critic_net.Q1(state, action_pi)
+
+        lmbda = self.alpha / Q_pi.abs().mean().detach()
+
+        bc_loss = nn.MSELoss()(action_pi, action)
+
+        energy = self.ebm.energy(state, action_pi)
+        energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
+        energy_mean = energy.mean()
+        de_da = torch.autograd.grad(energy_mean, action_pi, create_graph=True)
+        de_da = de_da[0]
+        self.dual_descent(de_da)
+
+        energy_loss = 1 * torch.norm(de_da) + (de_da * self.lmbda).mean()
+        # energy_loss = abs(de_da).sum()
 
         actor_loss = -lmbda * Q_pi.mean() + energy_loss
         # Optimize Actor

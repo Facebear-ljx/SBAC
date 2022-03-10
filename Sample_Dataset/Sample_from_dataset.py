@@ -250,9 +250,10 @@ class ReplayBuffer(object):
 
         # min_max normalization
         if scale_rewards:
-            r_max = np.max(self.reward)
-            r_min = np.min(self.reward)
-            self.reward = (self.reward - r_min) / (r_max - r_min)
+            self.reward -= 1.
+            # r_max = np.max(self.reward)
+            # r_min = np.min(self.reward)
+            # self.reward = (self.reward - r_min) / (r_max - r_min)
 
         s_mean = self.state.mean(0, keepdims=True)
         s_std = self.state.std(0, keepdims=True)

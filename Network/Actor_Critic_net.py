@@ -600,8 +600,8 @@ class EBM(nn.Module):
         x = F.relu(self.fc1(sa))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
-        # energy = self.fc4(x)
-        energy = torch.tanh(self.fc4(x)) * self.energy_scale
+        # energy = torch.tanh(self.fc4(x)) * self.energy_scale
+        energy = self.fc4(x)
         return energy
 
     def linear_distance(self, x, y):

@@ -180,17 +180,16 @@ class TD3_BC:
         ep_rews = 0.
         for i in range(10):
             while True:
-                # if self.scale_state == 'standard':
-                #     state = (state - self.s_mean) / (self.s_std + 1e-5)
+                state = (state - self.s_mean) / (self.s_std + 1e-3)
                 # elif self.scale_state == 'minmax':
                 #     state = (state - self.s_mean) / (self.s_std - self.s_mean)
                 state = state.squeeze()
-                action = self.actor_net(state).cpu().detach()
+                action = self.actor_net(state).cpu().detach().numpy()
 
                 # if self.scale_action:
                 #     action = action * (self.a_std + 1e-3) + self.a_mean
-                noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
-                action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
+                # noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
+                # action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward
                 # if self.total_it >= 100000 and i == 9:
