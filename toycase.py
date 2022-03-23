@@ -8,6 +8,7 @@ import torch.nn as nn
 from tqdm import tqdm
 import wandb
 from mpl_toolkits.mplot3d import Axes3D
+import seaborn as sns
 
 num_state, num_action, num_hidden, device = 1, 1, 32, 'cpu'
 alpha = 2.5
@@ -26,7 +27,7 @@ state_scale = 10.
 action_data = 0.4
 total_it = 0
 max_steps = 50
-initial_state = 0.5
+initial_state = 1.0
 
 actor_net = Actor_deterministic(num_state, num_action, num_hidden, device, max_action=max_action).float().to(device)
 actor_target = copy.deepcopy(actor_net)
@@ -287,6 +288,7 @@ def main():
     a_output = torch.unsqueeze(torch.flatten(a), dim=1)
     q = torch.ones_like(s)
     mc = torch.ones_like(s)
+    fig, ax = plt.subplots(1, 1)
 
     # collect data
     env = random_wave_onedim()
@@ -298,25 +300,26 @@ def main():
 
         while not done:
             if i >= 2:
-                action = negative_circle_policy(state)
-                # action = negative_policy()
+                # action = negative_circle_policy(state)
+                # action = negative_circle_policy_w_b(state)
+                action = negative_policy()
             else:
-                # action = positive_policy()
-                action = positive_circle_policy(state)
-            next_state, reward, done = env.step(action)
-            state = next_state
+                # action = positive_circle_policy_w_b(state)
+                # action = positive_circle_policy(state)
+                action = positive_policy()
+
+            _, _, done = env.step(action)
 
     dataset = env.buffer_to_dataset()
     xxx = dataset['observations']
     yyy = dataset['actions']
     xxx = np.squeeze(xxx, axis=1)
     plt.scatter(xxx, yyy)
-    plt.show()
 
-    s_mean, s_std = replay_buffer.convert_D4RL(dataset, scale_rewards=False, scale_state=None)
+    replay_buffer.convert_D4RL(dataset, scale_rewards=False, scale_state=None)
 
-    fig = plt.figure()
-    ax = Axes3D(fig)
+    # ax = Axes3D(fig)
+
     # learn and plt
     for total_it in tqdm(range(int(3.5e+5))):
 
@@ -325,7 +328,7 @@ def main():
 
         # update Critic
         critic_loss_pi = train_Q_pi(state, action, next_state, reward, not_done)
-        # ebm_loss = train_Distance(state, action)
+
         # delayed policy update
         if total_it % policy_freq == 0:
             actor_loss, bc_loss, Q_pi_mean = train_actor(state, action)
@@ -338,7 +341,6 @@ def main():
                            "Q_pi_mean": Q_pi_mean,
                            "evaluate_rewards": evaluate_reward,
                            "it_steps": total_it,
-                           # "ebm_loss": ebm_loss
                            })
 
                 if total_it > 10000:
@@ -348,34 +350,23 @@ def main():
 
                         for t in range(s_num):
                             for j in range(a_num):
-                                # q[t, j] = z[t * 100 + j] - env.mc_q(s[t, j], a[t, j], actor_net)
                                 q[t, j] = z[t * s_num + j]
                                 mc[t, j] = torch.tensor(env.mc_q(s[t, j], a[t, j], actor_net))
                                 q[t, j] = q[t, j] - mc[t, j]
-                                # q[t, j] = torch.abs(z[t * s_num + j] - torch.tensor(env.mc_q(s[t, j], a[t, j], actor_net)))
 
                         aaa = q.min(1)[0].unsqueeze(dim=1).repeat(1, num_action)
-                        # q_sum = q.sum(1).unsqueeze(axis=1).repeat(1, num_action)
-                        # q = q/q_sum
-
-                        # mc_sum = mc.sum(1).unsqueeze(axis=1).repeat(1, num_action)
-                        # mc = mc/mc_sum
-
-                        # bbb = q/q_sum q
                         bbb = torch.square(q - aaa)
-                        # # bbb = torch.square(q)
-                        ax.plot_surface(s, a, bbb.numpy(), cmap=plt.get_cmap('rainbow'))
+                        Q_res = ax.contourf(s, a, bbb.numpy(), 100, cmap=plt.get_cmap('rainbow'))
 
-                        # bbb_sum = bbb.sum(1).unsqueeze(axis=1).repeat(1, num_action)
-                        # bbb = bbb/bbb_sum
-                        # bbb = bbb.detach().cpu().numpy()
-                        # ax.plot_surface(s, a, bbb, cmap=plt.get_cmap('rainbow'))
                         plt.pause(0.01)
 
-    ax.set_title('Q surface')
-    ax.set_xlabel('s')
-    ax.set_ylabel('a')
-    ax.set_zlabel('Q')
+                        plt.scatter(xxx, yyy, c='white')
+                        ax.set_title('||Q - Q^head||^2_2 surface')
+                        ax.set_xlabel('s')
+                        ax.set_ylabel('a')
+
+                        # sns.heatmap(bbb.numpy())
+    fig.colorbar(Q_res)
     plt.ioff()
     plt.show()
 
