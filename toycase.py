@@ -10,6 +10,8 @@ import wandb
 from mpl_toolkits.mplot3d import Axes3D
 import seaborn as sns
 
+plot_type = 'circle'
+
 num_state, num_action, num_hidden, device = 1, 1, 32, 'cpu'
 alpha = 2.5
 gamma = 0.95
@@ -27,7 +29,13 @@ state_scale = 10.
 action_data = 0.4
 total_it = 0
 max_steps = 50
-initial_state = 1.0
+
+if plot_type == 'circle':
+    initial_state = 0.9
+elif plot_type == 'w_b':
+    initial_state = 0.5
+else:
+    initial_state = 0.7
 
 actor_net = Actor_deterministic(num_state, num_action, num_hidden, device, max_action=max_action).float().to(device)
 actor_target = copy.deepcopy(actor_net)
@@ -155,9 +163,6 @@ class random_wave_onedim(object):
             'rewards': np.array(self.r_buffer),
             'terminals': np.array(self.d_buffer),
         }
-
-    # def print_buffer(self):
-    #     print(self.s_buffer, self.a_buffer, self.next_s_buffer)
 
     def mc_q(self, state, action, actor):
         mc_q = 0.
@@ -300,28 +305,32 @@ def main():
 
         while not done:
             if i >= 2:
-                # action = negative_circle_policy(state)
-                # action = negative_circle_policy_w_b(state)
-                action = negative_policy()
+                if plot_type == 'circle':
+                    action = negative_circle_policy(state)
+                elif plot_type == 'w_b':
+                    action = negative_circle_policy_w_b(state)
+                else:
+                    action = negative_policy()
             else:
-                # action = positive_circle_policy_w_b(state)
-                # action = positive_circle_policy(state)
-                action = positive_policy()
+                if plot_type == 'circle':
+                    action = positive_circle_policy(state)
+                elif plot_type == 'w_b':
+                    action = positive_circle_policy_w_b(state)
+                else:
+                    action = positive_policy()
 
-            _, _, done = env.step(action)
+            next_state, _, done = env.step(action)
+            state = next_state
 
     dataset = env.buffer_to_dataset()
     xxx = dataset['observations']
     yyy = dataset['actions']
     xxx = np.squeeze(xxx, axis=1)
-    plt.scatter(xxx, yyy)
 
     replay_buffer.convert_D4RL(dataset, scale_rewards=False, scale_state=None)
 
-    # ax = Axes3D(fig)
-
     # learn and plt
-    for total_it in tqdm(range(int(3.5e+5))):
+    for total_it in tqdm(range(int(2e+4))):
 
         # sample data
         state, action, next_state, next_action, reward, not_done = replay_buffer.sample(batch_size)
@@ -342,30 +351,31 @@ def main():
                            "evaluate_rewards": evaluate_reward,
                            "it_steps": total_it,
                            })
+    # plt
+    with torch.no_grad():
+        plt.cla()
+        z = torch.squeeze(critic_net.Q1(s_input, a_output), dim=1)
 
-                if total_it > 10000:
-                    with torch.no_grad():
-                        plt.cla()
-                        z = torch.squeeze(critic_net.Q1(s_input, a_output), dim=1)
+        for t in range(s_num):
+            for j in range(a_num):
+                q[t, j] = z[t * s_num + j]
+                temp = 0.
+                for _ in range(3):
+                    temp += torch.tensor(env.mc_q(s[t, j], a[t, j], actor_net))
+                mc[t, j] = temp / 3
+                q[t, j] = q[t, j] - mc[t, j]
 
-                        for t in range(s_num):
-                            for j in range(a_num):
-                                q[t, j] = z[t * s_num + j]
-                                mc[t, j] = torch.tensor(env.mc_q(s[t, j], a[t, j], actor_net))
-                                q[t, j] = q[t, j] - mc[t, j]
+        aaa = q.min(1)[0].unsqueeze(dim=1).repeat(1, num_action)
+        bbb = torch.abs(q - aaa)
+        Q_res = ax.contourf(s, a, bbb.numpy(), 100, cmap=plt.get_cmap('rainbow'))
 
-                        aaa = q.min(1)[0].unsqueeze(dim=1).repeat(1, num_action)
-                        bbb = torch.square(q - aaa)
-                        Q_res = ax.contourf(s, a, bbb.numpy(), 100, cmap=plt.get_cmap('rainbow'))
+        plt.pause(0.01)
 
-                        plt.pause(0.01)
+        plt.scatter(xxx, yyy, c='white')
+        ax.set_title('||Q - Q^head||^2_2 surface')
+        ax.set_xlabel('s')
+        ax.set_ylabel('a')
 
-                        plt.scatter(xxx, yyy, c='white')
-                        ax.set_title('||Q - Q^head||^2_2 surface')
-                        ax.set_xlabel('s')
-                        ax.set_ylabel('a')
-
-                        # sns.heatmap(bbb.numpy())
     fig.colorbar(Q_res)
     plt.ioff()
     plt.show()
