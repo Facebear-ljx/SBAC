@@ -322,7 +322,7 @@ class Actor(nn.Module):
 
 
 class Actor_deterministic(nn.Module):
-    def __init__(self, num_state, num_action, num_hidden, device):
+    def __init__(self, num_state, num_action, num_hidden, device, max_action=1.):
         """
         Deterministic Actor network, used for TD3, DDPG, BCQ, TD3_BC
         :param num_state: dimension of the state
@@ -335,6 +335,7 @@ class Actor_deterministic(nn.Module):
         self.fc1 = nn.Linear(num_state, num_hidden)
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.action = nn.Linear(num_hidden, num_action)
+        self.max_action = max_action
 
     def forward(self, x):
         if isinstance(x, np.ndarray):
@@ -342,7 +343,7 @@ class Actor_deterministic(nn.Module):
         a = F.relu(self.fc1(x))
         a = F.relu(self.fc2(a))
         a = self.action(a)
-        return torch.tanh(a)
+        return torch.tanh(a) * self.max_action
 
 
 class Double_Critic(nn.Module):
@@ -569,6 +570,30 @@ class W(nn.Module):
         x = F.relu(self.fc2(x))
         x = F.softplus(self.fc3(x))
         return x
+
+
+class Encoder(nn.Module):
+    def __init__(self, dim_state, dim_action, dim_hidden, device):
+        super(Encoder, self).__init__()
+        self.device = device
+        self.dim_action = dim_action
+        self.dim_state = dim_state
+        self.en1 = nn.Linear(dim_state+dim_action, dim_hidden)
+        self.en2 = nn.Linear(dim_hidden, dim_hidden)
+        self.en3 = nn.Linear(dim_hidden, dim_state+dim_action)
+
+    def forward(self, state, action):
+        if isinstance(state, np.ndarray):
+            state = torch.tensor(state, dtype=torch.float).to(self.device)
+        if isinstance(action, np.ndarray):
+            action = torch.tensor(state, dtype=torch.float).to(self.device)
+        state_action = torch.cat([state, action], dim=1)
+        x = F.relu(self.en1(state_action))
+        x = F.relu(self.en2(x))
+        latent = self.en3(x)
+        latent_s = latent[:, 0:self.dim_state]
+        latent_a = latent[:, self.dim_state:self.dim_state+self.dim_action]
+        return latent_s, latent_a
 
 
 class EBM(nn.Module):

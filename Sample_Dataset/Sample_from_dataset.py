@@ -219,7 +219,7 @@ class ReplayBuffer(object):
             'terminals': np.array(done_),
         }
 
-    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False, scale_action=False):
+    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False, scale_action=False, taylor=False):
         """
         convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
         :param scale_action:
@@ -236,7 +236,6 @@ class ReplayBuffer(object):
             np.logical_and(
                 np.logical_not(dataset['terminals']),
                 np.arange(dataset_size) < dataset_size - 1))
-
         print('Found %d non-terminal steps out of a total of %d steps.' % (
             len(nonterminal_steps), dataset_size))
 
@@ -247,6 +246,18 @@ class ReplayBuffer(object):
         self.reward = dataset['rewards'][nonterminal_steps].reshape(-1, 1)
         self.not_done = 1. - dataset['terminals'][nonterminal_steps + 1].reshape(-1, 1)
         self.size = self.state.shape[0]
+
+        if taylor:
+            x = self.state[0:100000, 0]
+            y = self.state[0:100000, 1]
+            delete_index = np.where(np.logical_and(np.logical_and(x >= 0, x <= 10), np.logical_and(y >= 3.5, y <= 4.5)))
+            self.state = np.delete(self.state, delete_index)
+            self.action = np.delete(self.action, delete_index)
+            self.next_state = np.delete(self.next_state, delete_index)
+            self.next_action = np.delete(self.action, delete_index)
+            self.reward = np.delete(self.reward, delete_index)
+            self.not_done = np.delete(self.not_done, delete_index)
+            self.size = self.state.shape[0]
 
         # min_max normalization
         if scale_rewards:

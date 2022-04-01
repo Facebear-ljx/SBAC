@@ -15,7 +15,7 @@ class Energy:
     def __init__(self,
                  env_name,
                  num_hidden=256,
-                 gamma=0.99,
+                 gamma=0.995,
                  tau=0.005,
                  policy_noise=0.2,
                  noise_clip=0.5,
@@ -36,6 +36,7 @@ class Energy:
                  lr_ebm=1e-7,
                  lr_actor=3e-4,
                  lr_critic=3e-4,
+                 initial_alpha=6.,
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
@@ -97,7 +98,8 @@ class Energy:
             self.dataset,
             scale_rewards=scale_rewards,
             scale_state=scale_state,
-            scale_action=scale_action)
+            scale_action=scale_action,
+            taylor=False)
 
         # prepare the actor and critic
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
@@ -122,8 +124,8 @@ class Energy:
         # self.auto_alpha = torch.tensor(1., dtype=torch.float, requires_grad=True)
         # self.auto_alpha.to(device)
         # self.auto_alpha_optim = torch.optim.Adam([self.auto_alpha], lr=1e-1)
-        self.auto_alpha = torch.tensor(5.)
-        self.dual_step_size = torch.tensor(1e-4)
+        self.auto_alpha = torch.tensor(initial_alpha)
+        self.dual_step_size = torch.tensor(2e-5)
         # Q and Critic file location
         # self.file_loc = prepare_env(env_name)
 
@@ -182,14 +184,21 @@ class Energy:
             target_Q = torch.min(target_Q1, target_Q2)
             target_Q = reward + not_done * self.gamma * target_Q
 
+        # action.requires_grad = True
         Q1, Q2 = self.critic_net(state, action)
+        # Q1_mean, Q2_mean = Q1.mean(), Q2.mean()
+        # dq1_da = torch.autograd.grad(Q1_mean, action, create_graph=True)
+        # dq1_da = dq1_da[0].mean()
+        # dq2_da = torch.autograd.grad(Q2_mean, action, create_graph=True)
+        # dq2_da = dq2_da[0].mean()
 
         # Critic loss
-        critic_loss = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q)
+        critic_loss = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q) #+ 0.1 * (dq1_da + dq2_da)
 
         # Optimize Critic
         self.critic_optim.zero_grad()
         critic_loss.backward()
+        # torch.nn.utils.clip_grad_norm_(self.critic_net.parameters(), 1.5)
         self.critic_optim.step()
         return critic_loss.cpu().detach().numpy().item()
 
@@ -208,12 +217,17 @@ class Energy:
 
         energy = self.ebm.energy(state, action_pi)
         energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
+        # energy_diff = (energy - self.ebm.energy(state, action).detach())
+        # temp1 = 1. / energy_diff.abs().mean().detach()
 
         self.auto_alpha_update(energy_diff)
+        # self.auto_alpha_update(energy_diff.mean())
+        # energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
         energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
         energy_mean = energy.mean()
 
         actor_loss = -lmbda * Q_pi.mean() + energy_loss
+        # actor_loss = -lmbda * Q_pi.mean() + temp1 * energy_loss.mean()
         # Optimize Actor
         self.actor_optim.zero_grad()
         actor_loss.backward()
@@ -231,48 +245,7 @@ class Energy:
                Q_pi.mean().cpu().detach().numpy().item(), \
                energy_diff.cpu().detach().numpy().item(), \
                energy_mean.cpu().detach().numpy().item()
-
-    def train_actor_with_bilevel(self, state, action):
-        """
-               train the learned policy
-               """
-        # Actor loss
-        action_pi = self.actor_net(state)
-
-        Q_pi = self.critic_net.Q1(state, action_pi)
-
-        lmbda = self.alpha / Q_pi.abs().mean().detach()
-
-        bc_loss = nn.MSELoss()(action_pi, action)
-
-        energy = self.ebm.energy(state, action_pi)
-        energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
-        energy_mean = energy.mean()
-        de_da = torch.autograd.grad(energy_mean, action_pi, create_graph=True)
-        de_da = de_da[0]
-        self.dual_descent(de_da)
-
-        energy_loss = 1 * torch.norm(de_da) + (de_da * self.lmbda).mean()
-        # energy_loss = abs(de_da).sum()
-
-        actor_loss = -lmbda * Q_pi.mean() + energy_loss
-        # Optimize Actor
-        self.actor_optim.zero_grad()
-        actor_loss.backward()
-        self.actor_optim.step()
-
-        # update the frozen target models
-        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-
-        return actor_loss.cpu().detach().numpy().item(), \
-               bc_loss.cpu().detach().numpy().item(), \
-               Q_pi.mean().cpu().detach().numpy().item(), \
-               energy_diff.cpu().detach().numpy().item(), \
-               energy_mean.cpu().detach().numpy().item()
+        # energy_loss.mean().cpu().detach().numpy().item(), \
 
     def auto_alpha_update(self, energy_diff):
         with torch.no_grad():
