@@ -9,6 +9,7 @@ from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor_deterministic, Double_Critic, EBM
 from tqdm import tqdm
+import datetime
 
 
 class Energy:
@@ -61,7 +62,7 @@ class Energy:
         self.tau = tau
         self.policy_noise = policy_noise
         self.policy_freq = policy_freq
-        self.evaluate_freq = 5000
+        self.evaluate_freq = 1000
         self.energy_steps = energy_steps
         self.noise_clip = noise_clip
         self.alpha = alpha
@@ -82,6 +83,7 @@ class Energy:
         num_action = self.env.action_space.shape[0]
 
         # set seed
+        self.seed = seed
         self.env.seed(seed)
         self.env.action_space.seed(seed)
         torch.manual_seed(seed)
@@ -113,6 +115,7 @@ class Energy:
         self.ebm = EBM(num_state, num_action, 256, device, self.batch_size, negative_samples,
                        negative_policy).float().to(device)
         self.ebm_optim = torch.optim.Adam(self.ebm.parameters(), lr=lr_ebm)
+
         AAA = torch.ones(1, num_action).to(device)
         AAA = AAA * 5.
         self.lmbda = torch.tensor(AAA, dtype=torch.float, requires_grad=True)
@@ -121,13 +124,13 @@ class Energy:
         self.lmbda_optim = torch.optim.Adam([self.lmbda], lr=1e-2)
         self.all_returns = []
 
-        # self.auto_alpha = torch.tensor(1., dtype=torch.float, requires_grad=True)
-        # self.auto_alpha.to(device)
-        # self.auto_alpha_optim = torch.optim.Adam([self.auto_alpha], lr=1e-1)
         self.auto_alpha = torch.tensor(initial_alpha)
-        self.dual_step_size = torch.tensor(2e-5)
+        self.dual_step_size = torch.tensor(3e-4)
+
         # Q and Critic file location
-        # self.file_loc = prepare_env(env_name)
+        self.current_time = datetime.datetime.now()
+        logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}"
+        os.makedirs(logdir_name)
 
     def learn(self, total_time_step=1e+5):
         """
@@ -162,13 +165,13 @@ class Energy:
                                "energy": energy,
                                "energy_mean": energy_mean,
                                "evaluate_rewards": evaluate_reward,
-                               "dual_lmbda": self.lmbda.mean().item(),
                                "dual_alpha": self.auto_alpha.detach(),
                                "it_steps": total_it
                                })
+
+                    if total_it % (self.evaluate_freq * 10) == 0:
+                        self.save_parameters(evaluate_reward)
             self.total_it += 1
-            # if total_it % 100000 == 0:
-            #     self.save_parameters()
 
     def train_Q_pi(self, state, action, next_state, reward, not_done):
         """
@@ -186,14 +189,9 @@ class Energy:
 
         # action.requires_grad = True
         Q1, Q2 = self.critic_net(state, action)
-        # Q1_mean, Q2_mean = Q1.mean(), Q2.mean()
-        # dq1_da = torch.autograd.grad(Q1_mean, action, create_graph=True)
-        # dq1_da = dq1_da[0].mean()
-        # dq2_da = torch.autograd.grad(Q2_mean, action, create_graph=True)
-        # dq2_da = dq2_da[0].mean()
 
         # Critic loss
-        critic_loss = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q) #+ 0.1 * (dq1_da + dq2_da)
+        critic_loss = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q)
 
         # Optimize Critic
         self.critic_optim.zero_grad()
@@ -217,17 +215,12 @@ class Energy:
 
         energy = self.ebm.energy(state, action_pi)
         energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
-        # energy_diff = (energy - self.ebm.energy(state, action).detach())
-        # temp1 = 1. / energy_diff.abs().mean().detach()
 
         self.auto_alpha_update(energy_diff)
-        # self.auto_alpha_update(energy_diff.mean())
-        # energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
         energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
         energy_mean = energy.mean()
 
         actor_loss = -lmbda * Q_pi.mean() + energy_loss
-        # actor_loss = -lmbda * Q_pi.mean() + temp1 * energy_loss.mean()
         # Optimize Actor
         self.actor_optim.zero_grad()
         actor_loss.backward()
@@ -255,13 +248,6 @@ class Energy:
             self.auto_alpha += self.dual_step_size * alpha_loss.cpu().item()
             self.auto_alpha = torch.clip(self.auto_alpha, self.lmbda_min, self.lmbda_max)
 
-    def dual_descent(self, de_da):
-        lmbda_loss = -de_da * self.lmbda
-        lmbda_loss = lmbda_loss.mean()
-        self.lmbda_optim.zero_grad()
-        lmbda_loss.backward(retain_graph=True)
-        self.lmbda_optim.step()
-
     def train_Distance(self, state, action):
         predict, label = self.ebm.linear_distance(state, action)
         ebm_loss = nn.MSELoss()(predict, label)
@@ -286,13 +272,8 @@ class Energy:
                     state = (state - self.s_mean) / (self.s_std - self.s_mean)
                 state = state.squeeze()
                 action = self.actor_net(state).cpu().detach().numpy()
-
-                # noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
-                # action = (action + noise).clamp(-self.max_action, self.max_action).cpu().detach().numpy()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward
-                # if self.total_it >= 100000 and i == 9:
-                #     self.env.render()
                 if done:
                     state = self.env.reset()
                     break
@@ -300,10 +281,21 @@ class Energy:
         print('reward:', ep_rews)
         return ep_rews
 
-    # def save_parameters(self):
-    #     torch.save(self.critic_net.state_dict(), self.file_loc[2])
-    #     torch.save(self.actor_net.state_dict(), self.file_loc[3])
-    #
+    def save_parameters(self, reward):
+        logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}/{self.total_it}+{reward}"
+        os.makedirs(logdir_name)
+
+        # q_logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}/{self.total_it}+{reward}/q.pth"
+        a_logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}/{self.total_it}+{reward}/actor.pth"
+        # target_q_logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}/{self.total_it}+{reward}/q_.pth"
+        # target_a_logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}/{self.total_it}+{reward}/actor_.pth"
+        distance_logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}/{self.total_it}+{reward}/distance.pth"
+        # torch.save(self.critic_net.state_dict(), q_logdir_name)
+        # torch.save(self.critic_target.state_dict(), target_q_logdir_name)
+        torch.save(self.actor_net.state_dict(), a_logdir_name)
+        # torch.save(self.actor_target.state_dict(), target_a_logdir_name)
+        torch.save(self.ebm.state_dict(), distance_logdir_name)
+
     # def load_parameters(self):
     #     self.critic_net.load_state_dict(torch.load(self.file_loc[2]))
     #     self.actor_net.load_state_dict(torch.load(self.file_loc[3]))
