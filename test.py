@@ -1,4 +1,4 @@
-import d3rlpy
+import d3rlpy_bl
 
 # prepare dataset
 dataset, env = d3rlpy.datasets.get_d4rl('hopper-medium-replay-v2')

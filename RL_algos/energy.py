@@ -163,7 +163,7 @@ class Energy:
                                "energy_mean": energy_mean,
                                "evaluate_rewards": evaluate_reward,
                                "dual_lmbda": self.lmbda.mean().item(),
-                               "dual_alpha": self.auto_alpha,
+                               "dual_alpha": self.auto_alpha.detach(),
                                "it_steps": total_it
                                })
             self.total_it += 1
@@ -198,7 +198,7 @@ class Energy:
         # Optimize Critic
         self.critic_optim.zero_grad()
         critic_loss.backward()
-        # torch.nn.utils.clip_grad_norm_(self.critic_net.parameters(), 1.5)
+        # torch.nn.utils.clip_grad_norm_(self.critic_net.parameters(), 5.0)
         self.critic_optim.step()
         return critic_loss.cpu().detach().numpy().item()
 
@@ -231,6 +231,7 @@ class Energy:
         # Optimize Actor
         self.actor_optim.zero_grad()
         actor_loss.backward()
+        # torch.nn.utils.clip_grad_norm_(self.actor_net.parameters(), 5.0)
         self.actor_optim.step()
 
         # update the frozen target models

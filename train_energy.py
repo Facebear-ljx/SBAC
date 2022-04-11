@@ -6,14 +6,14 @@ import random
 
 
 def main():
-    wandb.init(project="Distance_function_antmaze", entity="facebear")
+    wandb.init(project="Distance_function_androit", entity="facebear")
 
     seed = random.randint(0, 1000)
     # Parameters
     parser = argparse.ArgumentParser(description='Solve the Hopper-v2 with TD3_BC')
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
-    parser.add_argument('--env_name', default='hopper-medium-v2', help='choose your mujoco env')
-    parser.add_argument('--alpha', default=125, type=float)
+    parser.add_argument('--env_name', default='antmaze-medium-diverse-v2', help='choose your mujoco env')
+    parser.add_argument('--alpha', default=20, type=float)
     parser.add_argument('--gamma', default=0.995, type=float)
     parser.add_argument('--negative_samples', default=20, type=int)
     parser.add_argument('--negative_policy', default=10, type=int)
@@ -23,7 +23,7 @@ def main():
     parser.add_argument('--scale_state', default=None)
     parser.add_argument('--scale_action', default=False)
     parser.add_argument('--lr_ebm', default=1e-4, type=float)
-    parser.add_argument('--initial_alpha', default=6., type=float)
+    parser.add_argument('--initial_alpha', default=1., type=float)
     parser.add_argument('--lr_actor', default=3e-4, type=float)
     parser.add_argument('--lr_critic', default=3e-4, type=float)
     parser.add_argument('--lmbda_min', default=1, type=float)
