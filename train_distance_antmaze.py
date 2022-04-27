@@ -7,7 +7,7 @@ import os
 
 
 def main():
-    wandb.init(project="Distance_function_antmaze_0.995_1e-3", entity="facebear")
+    wandb.init(project="Distance_function_antmaze_toycase_10", entity="facebear")
 
     seed = random.randint(0, 1000)
     # Parameters
@@ -28,6 +28,8 @@ def main():
     parser.add_argument('--lr_actor', default=3e-4, type=float)
     parser.add_argument('--lr_critic', default=1e-3, type=float)
     parser.add_argument('--lmbda_min', default=1, type=float)
+    parser.add_argument('--toycase', default=False)
+    parser.add_argument('--sparse', default=False)
     parser.add_argument("--seed", default=seed, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
     wandb.config.update(args)
@@ -54,7 +56,9 @@ def main():
                           lr_actor=args.lr_actor,
                           lr_critic=args.lr_critic,
                           initial_alpha=args.initial_alpha,
-                          gamma=args.gamma
+                          gamma=args.gamma,
+                          toycase=args.toycase,
+                          sparse=args.sparse
                           )
 
     agent_Energy.learn(total_time_step=int(1e+6))

@@ -38,6 +38,8 @@ class Energy:
                  lr_actor=3e-4,
                  lr_critic=3e-4,
                  initial_alpha=6.,
+                 toycase=False,
+                 sparse=False,
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
@@ -62,7 +64,7 @@ class Energy:
         self.tau = tau
         self.policy_noise = policy_noise
         self.policy_freq = policy_freq
-        self.evaluate_freq = 1000
+        self.evaluate_freq = 100000
         self.energy_steps = energy_steps
         self.noise_clip = noise_clip
         self.alpha = alpha
@@ -91,8 +93,8 @@ class Energy:
         # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
-        self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio)
-        if 'antmaze' in env_name:
+        self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio, toycase=toycase, env_name=env_name)
+        if 'antmaze' in env_name and sparse==False:
             scale_rewards = True
         else:
             scale_rewards = False
@@ -101,7 +103,7 @@ class Energy:
             scale_rewards=scale_rewards,
             scale_state=scale_state,
             scale_action=scale_action,
-            taylor=False)
+        )
 
         # prepare the actor and critic
         self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
@@ -138,10 +140,10 @@ class Energy:
         :param total_time_step: the total iteration times for training TD3_BC
         :return: None
         """
-        for total_it in tqdm(range(int(total_time_step))):
+        for total_it in tqdm(range(1, int(total_time_step) + 1)):
 
             # sample data
-            state, action, next_state, next_action, reward, not_done = self.replay_buffer.sample(self.batch_size)
+            state, action, next_state, _, reward, not_done = self.replay_buffer.sample(self.batch_size)
 
             # update Critic
             critic_loss_pi = self.train_Q_pi(state, action, next_state, reward, not_done)
@@ -169,7 +171,7 @@ class Energy:
                                "it_steps": total_it
                                })
 
-                    if total_it % (self.evaluate_freq * 10) == 0:
+                    if total_it % (self.evaluate_freq * 2) == 0:
                         self.save_parameters(evaluate_reward)
             self.total_it += 1
 
@@ -264,7 +266,7 @@ class Energy:
         """
         state = self.env.reset()
         ep_rews = 0.
-        for i in range(10):
+        for i in range(100):
             while True:
                 if self.scale_state == 'standard':
                     state = (state - self.s_mean) / (self.s_std + 1e-5)
@@ -277,7 +279,7 @@ class Energy:
                 if done:
                     state = self.env.reset()
                     break
-        ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100 / 10.
+        ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100 / 100.
         print('reward:', ep_rews)
         return ep_rews
 

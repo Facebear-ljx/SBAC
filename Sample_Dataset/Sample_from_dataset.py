@@ -3,7 +3,7 @@ import torch
 
 
 class ReplayBuffer(object):
-    def __init__(self, state_dim, action_dim, max_size=int(1e6), device='cuda'):
+    def __init__(self, state_dim, action_dim, max_size=int(2e6), device='cuda'):
         self.max_size = max_size
         self.ptr = 0
         self.size = 0
@@ -148,7 +148,7 @@ class ReplayBuffer(object):
             torch.FloatTensor(self.not_done[ind]).to(self.device)
         )
 
-    def split_dataset(self, env, dataset, terminate_on_end=False, ratio=10):
+    def split_dataset(self, env, dataset, terminate_on_end=False, ratio=10, toycase=False, env_name=None):
         """
             Returns datasets formatted for use by standard Q-learning algorithms,
             with observations, actions, next_observations, rewards, and a terminal
@@ -187,6 +187,28 @@ class ReplayBuffer(object):
 
         episode_step = 0
         for i in range(int(N / ratio) - 1):
+            if 'large' in env_name:
+                if 26 <= dataset['observations'][i, 0] <= 30 \
+                        and 14 <= dataset['observations'][i, 1] <= 18 \
+                        and toycase:
+                    # print('find a point')
+                    continue
+            elif 'medium' in env_name:
+                if 10 <= dataset['observations'][i, 0] <= 14 \
+                        and 10 <= dataset['observations'][i, 1] <= 14 \
+                        and toycase:
+                    # print(dataset['observations'][i, 0])
+                    # print(dataset['observations'][i, 1])
+                    # print(np.logical_and(10 <= dataset['observations'][i, 0] <= 15, 5 <= dataset['observations'][i, 1] <= 20))
+                    # print('find a point')
+                    continue
+            elif 'umaze' in env_name:
+                if 6 <= dataset['observations'][i, 0] <= 10 \
+                        and 2 <= dataset['observations'][i, 1] <= 6 \
+                        and toycase:
+                    # print('find a point')
+                    continue
+
             obs = dataset['observations'][i].astype(np.float32)
             new_obs = dataset['observations'][i + 1].astype(np.float32)
             action = dataset['actions'][i].astype(np.float32)
@@ -219,7 +241,7 @@ class ReplayBuffer(object):
             'terminals': np.array(done_),
         }
 
-    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False, scale_action=False, taylor=False):
+    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False, scale_action=False):
         """
         convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
         :param scale_action:
@@ -246,18 +268,6 @@ class ReplayBuffer(object):
         self.reward = dataset['rewards'][nonterminal_steps].reshape(-1, 1)
         self.not_done = 1. - dataset['terminals'][nonterminal_steps + 1].reshape(-1, 1)
         self.size = self.state.shape[0]
-
-        if taylor:
-            x = self.state[0:100000, 0]
-            y = self.state[0:100000, 1]
-            delete_index = np.where(np.logical_and(np.logical_and(x >= 0, x <= 10), np.logical_and(y >= 3.5, y <= 4.5)))
-            self.state = np.delete(self.state, delete_index)
-            self.action = np.delete(self.action, delete_index)
-            self.next_state = np.delete(self.next_state, delete_index)
-            self.next_action = np.delete(self.action, delete_index)
-            self.reward = np.delete(self.reward, delete_index)
-            self.not_done = np.delete(self.not_done, delete_index)
-            self.size = self.state.shape[0]
 
         # min_max normalization
         if scale_rewards:
