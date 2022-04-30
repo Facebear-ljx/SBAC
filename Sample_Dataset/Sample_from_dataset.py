@@ -193,7 +193,7 @@ class ReplayBuffer(object):
                         and toycase:
                     # print('find a point')
                     continue
-            elif 'medium' in env_name:
+            elif 'antmaze-medium' in env_name:
                 if 10 <= dataset['observations'][i, 0] <= 14 \
                         and 10 <= dataset['observations'][i, 1] <= 14 \
                         and toycase:
@@ -208,6 +208,12 @@ class ReplayBuffer(object):
                         and toycase:
                     # print('find a point')
                     continue
+            # elif 'hopper' in env_name:
+            #     if 1.5 <= dataset['infos/qvel'][i, 0] <= 2.5:
+            #         continue
+            # elif 'halfcheetah' in env_name:
+            #     if 1.5 <= dataset['infos/qvel'][i, 0] <= 4:
+            #         continue
 
             obs = dataset['observations'][i].astype(np.float32)
             new_obs = dataset['observations'][i + 1].astype(np.float32)

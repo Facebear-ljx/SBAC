@@ -7,14 +7,14 @@ import os
 
 
 def main():
-    wandb.init(project="Distance_function_mujoco", entity="facebear")
+    wandb.init(project="Distance_mujoco_log_barrier", entity="facebear")
 
     seed = random.randint(0, 1000)
     # Parameters
     parser = argparse.ArgumentParser(description='Solve the Hopper-v2 with TD3_BC')
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
-    parser.add_argument('--env_name', default='hopper-medium-expert-v2', help='choose your mujoco env')
-    parser.add_argument('--alpha', default=5, type=float)
+    parser.add_argument('--env_name', default='hopper-medium-replay-v2', help='choose your mujoco env')
+    parser.add_argument('--alpha', default=17.5, type=float)
     parser.add_argument('--gamma', default=0.99, type=float)
     parser.add_argument('--negative_samples', default=20, type=int)
     parser.add_argument('--negative_policy', default=10, type=int)

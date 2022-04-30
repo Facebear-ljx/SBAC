@@ -11,6 +11,8 @@ from Network.Actor_Critic_net import Actor_deterministic, Double_Critic, EBM
 from tqdm import tqdm
 import datetime
 
+EPSILON = 1e-8
+
 
 class Energy:
     def __init__(self,
@@ -40,6 +42,8 @@ class Energy:
                  initial_alpha=6.,
                  toycase=False,
                  sparse=False,
+                 evaluate_freq=5000,
+                 evalute_episodes=10,
                  device='cpu'):
         """
         Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
@@ -64,7 +68,8 @@ class Energy:
         self.tau = tau
         self.policy_noise = policy_noise
         self.policy_freq = policy_freq
-        self.evaluate_freq = 100000
+        self.evaluate_freq = evaluate_freq
+        self.evaluate_episodes = evalute_episodes
         self.energy_steps = energy_steps
         self.noise_clip = noise_clip
         self.alpha = alpha
@@ -156,7 +161,7 @@ class Energy:
 
             # delayed policy update
             if total_it % self.policy_freq == 0:
-                actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor_with_auto_alpha(state, action)
+                actor_loss, bc_loss, Q_pi_mean, energy, energy_mean, log_barrier = self.train_actor_with_auto_alpha_log_barrier(state, action)
                 if total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
                     wandb.log({"actor_loss": actor_loss,
@@ -168,7 +173,8 @@ class Energy:
                                "energy_mean": energy_mean,
                                "evaluate_rewards": evaluate_reward,
                                "dual_alpha": self.auto_alpha.detach(),
-                               "it_steps": total_it
+                               "it_steps": total_it,
+                               "log_barrier": log_barrier
                                })
 
                     if total_it % (self.evaluate_freq * 2) == 0:
@@ -243,6 +249,50 @@ class Energy:
                energy_mean.cpu().detach().numpy().item()
         # energy_loss.mean().cpu().detach().numpy().item(), \
 
+    def train_actor_with_auto_alpha_log_barrier(self, state, action):
+        """
+               train the learned policy
+        """
+        # Actor loss
+        action_pi = self.actor_net(state)
+
+        Q_pi = self.critic_net.Q1(state, action_pi)
+
+        lmbda = self.alpha / Q_pi.abs().mean().detach()
+
+        bc_loss = nn.MSELoss()(action_pi, action)
+
+        energy = self.ebm.energy(state, action_pi)
+        energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
+
+        log_barrier = torch.log(torch.abs(torch.clip(energy_diff, max=0))+EPSILON)
+
+        self.auto_alpha_update(log_barrier)
+        energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
+        energy_mean = energy.mean()
+
+        actor_loss = -lmbda * Q_pi.mean() - log_barrier
+        # Optimize Actor
+        self.actor_optim.zero_grad()
+        actor_loss.backward()
+        # torch.nn.utils.clip_grad_norm_(self.actor_net.parameters(), 5.0)
+        self.actor_optim.step()
+
+        # update the frozen target models
+        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return actor_loss.cpu().detach().numpy().item(), \
+               bc_loss.cpu().detach().numpy().item(), \
+               Q_pi.mean().cpu().detach().numpy().item(), \
+               energy_diff.cpu().detach().numpy().item(), \
+               energy_mean.cpu().detach().numpy().item(), \
+               log_barrier.cpu().detach().numpy().item()
+        # energy_loss.mean().cpu().detach().numpy().item(), \
+
     def auto_alpha_update(self, energy_diff):
         with torch.no_grad():
             aaa = energy_diff - self.lmbda_thre
@@ -266,7 +316,7 @@ class Energy:
         """
         state = self.env.reset()
         ep_rews = 0.
-        for i in range(100):
+        for i in range(self.evaluate_episodes):
             while True:
                 if self.scale_state == 'standard':
                     state = (state - self.s_mean) / (self.s_std + 1e-5)
@@ -279,7 +329,7 @@ class Energy:
                 if done:
                     state = self.env.reset()
                     break
-        ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100 / 100.
+        ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100 / self.evaluate_episodes
         print('reward:', ep_rews)
         return ep_rews
 

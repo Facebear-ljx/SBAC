@@ -58,7 +58,9 @@ def main():
                           initial_alpha=args.initial_alpha,
                           gamma=args.gamma,
                           toycase=args.toycase,
-                          sparse=args.sparse
+                          sparse=args.sparse,
+                          evaluate_freq=100000,
+                          evalute_episodes=100
                           )
 
     agent_Energy.learn(total_time_step=int(1e+6))
