@@ -188,8 +188,10 @@ class ReplayBuffer(object):
         episode_step = 0
         for i in range(int(N / ratio) - 1):
             if 'large' in env_name:
-                if 26 <= dataset['observations'][i, 0] <= 30 \
-                        and 14 <= dataset['observations'][i, 1] <= 18 \
+                if (0 <= dataset['observations'][i, 0] <= 0 and 15 <= dataset['observations'][i, 1] <= 18) \
+                        or (10.5 <= dataset['observations'][i, 0] <= 21 and 7 <= dataset['observations'][i, 1] <= 9) \
+                        or (0 <= dataset['observations'][i, 0] <= 0 and 6.5 <= dataset['observations'][i, 1] <= 9.5) \
+                        or (19 <= dataset['observations'][i, 0] <= 29.5 and 15 <= dataset['observations'][i, 1] <= 17) \
                         and toycase:
                     # print('find a point')
                     continue

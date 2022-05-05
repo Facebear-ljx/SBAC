@@ -11,7 +11,7 @@ from Network.Actor_Critic_net import Actor_deterministic, Double_Critic, EBM
 from tqdm import tqdm
 import datetime
 
-EPSILON = 1e-8
+EPSILON = 1e-20
 
 
 class Energy:
@@ -161,7 +161,7 @@ class Energy:
 
             # delayed policy update
             if total_it % self.policy_freq == 0:
-                actor_loss, bc_loss, Q_pi_mean, energy, energy_mean, log_barrier = self.train_actor_with_auto_alpha_log_barrier(state, action)
+                actor_loss, bc_loss, Q_pi_mean, energy, energy_mean = self.train_actor_with_auto_alpha(state, action)
                 if total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
                     wandb.log({"actor_loss": actor_loss,
@@ -174,7 +174,7 @@ class Energy:
                                "evaluate_rewards": evaluate_reward,
                                "dual_alpha": self.auto_alpha.detach(),
                                "it_steps": total_it,
-                               "log_barrier": log_barrier
+                               # "log_barrier": log_barrier
                                })
 
                     if total_it % (self.evaluate_freq * 2) == 0:
@@ -263,14 +263,19 @@ class Energy:
         bc_loss = nn.MSELoss()(action_pi, action)
 
         energy = self.ebm.energy(state, action_pi)
-        energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
+        # bbb = torch.quantile(self.ebm.energy(state, action), 0.9).detach()
+        bbb = torch.max(self.ebm.energy(state, action))
+        # energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
+        energy_diff = (energy-bbb).mean()
 
         log_barrier = torch.log(torch.abs(torch.clip(energy_diff, max=0))+EPSILON)
 
-        self.auto_alpha_update(log_barrier)
-        energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
+        # self.auto_alpha_update(log_barrier)
+        # energy_loss = self.auto_alpha.detach() * (energy_diff - self.lmbda_thre)
         energy_mean = energy.mean()
-
+        # bbb = torch.quantile(self.ebm.energy(state, action), 0.9)
+        # energy_diff = (energy - self.ebm.energy(state, action).detach()).mean()
+        # energy_diff = (energy - bbb).mean()
         actor_loss = -lmbda * Q_pi.mean() - log_barrier
         # Optimize Actor
         self.actor_optim.zero_grad()

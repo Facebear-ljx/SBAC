@@ -242,7 +242,7 @@ def train_actor(state, action):
     bc_loss = nn.MSELoss()(action_pi, action)
 
     # distance = ebm.energy(state, action_pi).mean()
-    actor_loss = -lmbda * Q_pi.mean() + bc_loss
+    actor_loss = -lmbda * Q_pi.mean()
 
     # Optimize Actor
     actor_optim.zero_grad()
@@ -342,7 +342,7 @@ def main():
         if total_it % policy_freq == 0:
             actor_loss, bc_loss, Q_pi_mean = train_actor(state, action)
 
-            if total_it % 1000 == 0:
+            if total_it % 5000 == 0:
                 evaluate_reward = rollout_evaluate(env)
                 wandb.log({"actor_loss": actor_loss,
                            "bc_loss": bc_loss,
@@ -372,7 +372,7 @@ def main():
         plt.pause(0.01)
 
         plt.scatter(xxx, yyy, c='white')
-        ax.set_title('||Q - Q^head||^2_2 surface')
+        ax.set_title('$||Q - \hat{Q}||^2_2 surface$')
         ax.set_xlabel('s')
         ax.set_ylabel('a')
 
