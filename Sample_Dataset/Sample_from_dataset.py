@@ -195,15 +195,15 @@ class ReplayBuffer(object):
                         and toycase:
                     # print('find a point')
                     continue
-            elif 'antmaze-medium' in env_name:
-                if 10 <= dataset['observations'][i, 0] <= 14 \
-                        and 10 <= dataset['observations'][i, 1] <= 14 \
-                        and toycase:
+            # elif 'antmaze-medium' in env_name:
+            #     if (11.5 <= dataset['observations'][i, 0] <= 20.5 and 11 <= dataset['observations'][i, 1] <= 13) \
+            #             or (4 <= dataset['observations'][i, 0] <= 13 and 7 <= dataset['observations'][i, 1] <= 9) \
+            #             and toycase:
                     # print(dataset['observations'][i, 0])
                     # print(dataset['observations'][i, 1])
                     # print(np.logical_and(10 <= dataset['observations'][i, 0] <= 15, 5 <= dataset['observations'][i, 1] <= 20))
                     # print('find a point')
-                    continue
+                    # continue
             elif 'umaze' in env_name:
                 if 6 <= dataset['observations'][i, 0] <= 10 \
                         and 2 <= dataset['observations'][i, 1] <= 6 \
@@ -249,7 +249,7 @@ class ReplayBuffer(object):
             'terminals': np.array(done_),
         }
 
-    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False, scale_action=False):
+    def convert_D4RL(self, dataset, scale_rewards=False, scale_state=False, scale_action=False, norm_reward=False):
         """
         convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
         :param scale_action:
@@ -283,6 +283,11 @@ class ReplayBuffer(object):
             # r_max = np.max(self.reward)
             # r_min = np.min(self.reward)
             # self.reward = (self.reward - r_min) / (r_max - r_min)
+
+        if norm_reward:
+            r_min = self.reward.min(0, keepdims=True)
+            r_max = self.reward.max(0, keepdims=True)
+            self.reward = (self.reward - r_min) / (r_max - r_min)
 
         s_mean = self.state.mean(0, keepdims=True)
         s_std = self.state.std(0, keepdims=True)

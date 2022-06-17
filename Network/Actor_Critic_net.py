@@ -649,6 +649,26 @@ class EBM(nn.Module):
         label = norm
         return output, label
 
+    def exp_distance(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+
+        state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        state = state.view(self.batch_size * self.negative_samples, self.num_state)
+
+        action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
+        action = action.view(self.batch_size * self.negative_samples, self.num_action)
+
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)
+        noise = noise_action - action
+        norm = torch.norm(noise, dim=1, keepdim=True)
+
+        output = self.energy(state, noise_action)
+        label = torch.exp(norm)
+        return output, label
+
     def distance(self, x, y):
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
