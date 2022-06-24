@@ -148,7 +148,7 @@ class IQL:
                             "v_mean": v.mean().cpu().detach().numpy().item(),
                             "v_loss": v_loss.cpu().detach().numpy().item(),
                             "actor_loss": actor_loss.cpu().detach().numpy().item(),
-                            "bc_loss": bc_loss.cpu().detach().numpy().item(),
+                            "bc_loss": bc_loss.mean().cpu().detach().numpy().item(),
                             "critic_loss": critic_loss.cpu().detach().numpy().item(),
                             "it_steps": total_it,
                             })
@@ -203,8 +203,8 @@ class IQL:
         log_pi = self.actor_net.get_log_density(state, action)
 
         bc_loss = -log_pi
-
-        actor_loss = torch.mean(exp_adv, bc_loss)
+        
+        actor_loss = torch.mean(exp_adv * bc_loss)
 
         # Optimize Actor
         self.actor_optim.zero_grad()
