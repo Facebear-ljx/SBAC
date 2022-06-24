@@ -103,7 +103,6 @@ class IQL:
 
         # prepare the actor and critic
         self.actor_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
-        self.actor_target = copy.deepcopy(self.actor_net)
         self.actor_optim = torch.optim.Adam(self.actor_net.parameters(), lr=lr_actor)
         self.actor_lr_schedule = CosineAnnealingLR(self.actor_optim, n_steps)
 
@@ -191,6 +190,11 @@ class IQL:
         critic_loss.backward()
         # torch.nn.utils.clip_grad_norm_(self.critic_net.parameters(), 5.0)
         self.critic_optim.step()
+
+        # update the frozen target models
+        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.soft_update * param.data + (1 - self.soft_update) * target_param.data)
+        
         return critic_loss
 
 
@@ -212,13 +216,6 @@ class IQL:
         self.actor_optim.step()
         self.actor_lr_schedule.step()
 
-        # update the frozen target models
-        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
-            target_param.data.copy_(self.soft_update * param.data + (1 - self.soft_update) * target_param.data)
-
-        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.soft_update * param.data + (1 - self.soft_update) * target_param.data)
-
         return actor_loss, bc_loss
 
 
@@ -236,7 +233,7 @@ class IQL:
                 elif self.scale_state == 'minmax':
                     state = (state - self.s_mean) / (self.s_std - self.s_mean)
                 state = state.squeeze()
-                action = self.actor_net(state).cpu().detach().numpy()
+                action = self.actor_net.get_action(state).cpu().detach().numpy()
                 state, reward, done, _ = self.env.step(action)
                 ep_rews += reward
                 if done:
