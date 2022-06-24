@@ -345,6 +345,13 @@ class Actor_deterministic(nn.Module):
         a = self.action(a)
         return torch.tanh(a) * self.max_action
 
+    def get_action(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        a = F.relu(self.fc1(x))
+        a = F.relu(self.fc2(a))
+        a = self.action(a)
+        return torch.tanh(a) * self.max_action
 
 class Double_Critic(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):

@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--lr_actor', default=3e-4, type=float)
     parser.add_argument('--lr_critic', default=3e-4, type=float)
     parser.add_argument('--n_steps', default=1e+6, type=int)
+    parser.add_argument('--deterministic', default=True)
     parser.add_argument("--seed", default=seed, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
     wandb.config.update(args)
@@ -45,6 +46,7 @@ def main():
                     gamma=args.gamma,
                     evaluate_freq=5000,
                     evalute_episodes=10,
+                    deterministic=args.deterministic,
                     )
 
     iql_agent.learn(total_time_step=int(1e+6))
