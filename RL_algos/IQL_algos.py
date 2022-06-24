@@ -191,7 +191,7 @@ class IQL:
         critic_loss = (nn.MSELoss()(Q1, target_q) + nn.MSELoss()(Q2, target_q))/2
 
         # Optimize Critic
-        self.critic_optim.zero_grad()
+        self.critic_optim.zero_grad(set_to_none=True)
         critic_loss.backward()
         # torch.nn.utils.clip_grad_norm_(self.critic_net.parameters(), 5.0)
         self.critic_optim.step()
@@ -210,7 +210,7 @@ class IQL:
         exp_adv = torch.exp(self.beta * advantage.detach()).clamp(max=EXP_ADV_MAX)
         # Actor loss
         if self.deterministic:
-            bc_loss = torch.sum((action - self.actor_net(state))**2, dim=1)
+            bc_loss = torch.sum((action - self.actor_net(state))**2, dim=1, keepdim=True)
         else:
             log_pi = self.actor_net.get_log_density(state, action)
             bc_loss = -log_pi
@@ -218,7 +218,7 @@ class IQL:
         actor_loss = torch.mean(exp_adv * bc_loss)
 
         # Optimize Actor
-        self.actor_optim.zero_grad()
+        self.actor_optim.zero_grad(set_to_none=True)
         actor_loss.backward()
         self.actor_optim.step()
         self.actor_lr_schedule.step()
