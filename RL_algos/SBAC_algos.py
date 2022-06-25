@@ -12,6 +12,7 @@ import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
 from Sample_Dataset.Prepare_env import prepare_env
 from Network.Actor_Critic_net import Actor, BC_standard, Q_critic, Alpha, W
+from tqdm import tqdm
 
 ALPHA_MAX = 500.
 ALPHA_MIN = 0.2
@@ -79,8 +80,20 @@ class SBAC:
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
         # self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(d4rl.qlearning_dataset(self.env, self.dataset),
         #                                                           scale_rewards=True, scale_state=True)
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL_td_lambda(self.dataset, scale_rewards=False,
-                                                                            scale_state=True, n=lmbda)
+        self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=1., toycase=False,
+                                                        env_name=env_name)
+
+        if 'antmaze' in env_name:
+            scale_rewards = True
+        else:
+            scale_rewards = False
+
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(
+            self.dataset,
+            scale_rewards=scale_rewards,
+            scale_state=None,
+            scale_action=False,
+        )
 
         # set seed
         self.env.seed(seed)
@@ -123,7 +136,7 @@ class SBAC:
         self.w_optim = optim.Adam(self.w_net.parameters(), self.lr_critic)
 
         self.Use_W = Use_W
-        self.file_loc = prepare_env(env_name)
+        # self.file_loc = prepare_env(env_name)
 
         self.logger = {
             'delta_t': time.time_ns(),
@@ -138,15 +151,22 @@ class SBAC:
         pretrain behavior cloning for self.warmup_steps and save the bc model parameters at self.file_loc
         :return: None
         """
-        for i in range(self.warmup_steps):
+        logdir_name = f"./Model/{self.env_name}/bc"
+        if os.path.exists(logdir_name):
+            a = 0
+        else:
+            os.makedirs(logdir_name)
+        for i in tqdm(range(1, int(self.warmup_steps) + 1)):
             state, action, _, _, _, _ = self.replay_buffer.sample(self.batch_size)
             bc_loss = self.train_bc_standard(s=state, a=action)
-            if i % 5000 == 0:
+            if i % 100000 == 0:
                 miu_reward = self.rollout_evaluate(pi='miu')
                 wandb.log({"bc_loss": bc_loss,
                            "miu_reward": miu_reward
                            })
-        torch.save(self.bc_standard_net.state_dict(), self.file_loc[1])
+
+        save_name = f"./Model/{self.env_name}/bc.pth"
+        torch.save(self.bc_standard_net.state_dict(), save_name)
 
     def learn(self, total_time_step=1e+6):
         """
@@ -157,7 +177,7 @@ class SBAC:
         i_so_far = 0
 
         # load pretrain model parameters
-        if os.path.exists(self.file_loc[1]):
+        if os.path.exists(f"./Model/{self.env_name}/bc/bc.pth"):
             self.load_parameters()
         else:
             self.pretrain_bc_standard()
@@ -189,8 +209,8 @@ class SBAC:
             self.actor_optim.step()
 
             # save model
-            if i_so_far % 100000 == 0:
-                self.save_parameters()
+            # if i_so_far % 100000 == 0:
+                # self.save_parameters()
 
             # log_summary
             if i_so_far % 3000 == 0:
@@ -204,8 +224,9 @@ class SBAC:
                            "q_miu_mean": q_miu_mean,
                            "log_miu": log_miu.mean().item(),
                            "it_steps": i_so_far,
-                           "alpha": self.alpha.item()
+                           # "alpha": self.alpha.item()
                            })
+                print(i_so_far)
 
     def build_w_loss(self, s1, a1, s2):
         """
@@ -302,6 +323,7 @@ class SBAC:
                 if done:
                     break
         ep_rews = d4rl.get_normalized_score(env_name=self.env_name, score=ep_rews) * 100
+        print(ep_rews)
         return ep_rews
 
     def save_parameters(self):
@@ -310,7 +332,7 @@ class SBAC:
         torch.save(self.actor_net.state_dict(), self.file_loc[3])
 
     def load_parameters(self):
-        self.bc_standard_net.load_state_dict(torch.load(self.file_loc[1]))
+        self.bc_standard_net.load_state_dict(torch.load(f"./Model/{self.env_name}/bc.pth"))
 
     def load_q_actor_parameters(self):
         self.bc_standard_net.load_state_dict(torch.load(self.file_loc[1]))

@@ -7,7 +7,7 @@ import os
 
 
 def main():
-    wandb.init(project="Q+distance", entity="facebear")
+    wandb.init(project="minQ_ant_scale_state", entity="facebear")
 
     seed = random.randint(0, 1000)
     # Parameters
@@ -22,7 +22,7 @@ def main():
     parser.add_argument('--batch_size', default=256, type=int)
     parser.add_argument('--energy_steps', default=int(1e+5), type=int, help='total iteration steps to train EBM')
     parser.add_argument('--strong_contrastive', default=False)
-    parser.add_argument('--scale_state', default="standard")
+    parser.add_argument('--scale_state', default=None)
     parser.add_argument('--scale_action', default=False)
     parser.add_argument('--lr_ebm', default=1e-3, type=float)
     parser.add_argument('--initial_alpha', default=5., type=float)
@@ -35,7 +35,7 @@ def main():
     # setup mujoco environment and energy agent
     env_name = args.env_name
     current_time = datetime.datetime.now()
-    wandb.run.name = f"{args.lmbda_in}_{args.lmbda_ood}_{env_name}_{args.lr_ebm}"
+    wandb.run.name = f"{args.lmbda_ood}_{args.lmbda_in}_{env_name}"
 
     agent_Energy = Energy(env_name=env_name,
                           device=args.device,
@@ -54,10 +54,12 @@ def main():
                           lr_actor=args.lr_actor,
                           lr_critic=args.lr_critic,
                           initial_alpha=args.initial_alpha,
-                          gamma=args.gamma
+                          gamma=args.gamma,
+                          evaluate_freq=100000,
+                          evalute_episodes=100
                           )
 
-    agent_Energy.learn(total_time_step=int(1e+6))
+    agent_Energy.learn(total_time_step=int(2e+6))
     # agent_TD3_BC.online_exploration(exploration_step=int(1e+3))
 
 

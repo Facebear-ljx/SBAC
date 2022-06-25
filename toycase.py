@@ -30,7 +30,7 @@ action_data = 0.4
 total_it = 0
 max_steps = 50
 
-if plot_type == 'circle':
+if plot_type == "w_b":
     initial_state = 0.9
 elif plot_type == 'w_b':
     initial_state = 0.5

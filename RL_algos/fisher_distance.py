@@ -162,11 +162,11 @@ class Energy:
                 actor_loss, bc_loss, Q_pi_mean = self.train_actor_with_auto_alpha(state, action)
                 if total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
-                    wandb.log({"actor_loss": actor_loss,
-                               "bc_loss": bc_loss,
-                               "critic_loss_ood": critic_loss_ood,
-                               "critic_loss_in": critic_loss_in,
-                               "Q_pi_mean": Q_pi_mean,
+                    wandb.log({"actor_loss": actor_loss.cpu().detach().numpy().item(),
+                               "bc_loss": bc_loss.cpu().detach().numpy().item(),
+                               "critic_loss_ood": critic_loss_ood.cpu().detach().numpy().item(),
+                               "critic_loss_in": critic_loss_in.cpu().detach().numpy().item(),
+                               "Q_pi_mean": Q_pi_mean.cpu().detach().numpy().item(),
                                # "energy": energy,
                                # "distance_mean": energy_mean,
                                "evaluate_rewards": evaluate_reward,
@@ -215,7 +215,7 @@ class Energy:
         critic_loss.backward()
         # torch.nn.utils.clip_grad_norm_(self.critic_net.parameters(), 5.0)
         self.critic_optim.step()
-        return critic_loss_in.cpu().detach().numpy().item(), critic_loss_ood.cpu().detach().numpy().item()
+        return critic_loss_in, critic_loss_ood
 
     # def train_Q_pi(self, state, action, next_state, reward, not_done):
     #     """
@@ -272,7 +272,7 @@ class Energy:
 
         bc_loss = nn.MSELoss()(action_pi, action)
 
-        actor_loss = -Q_pi.mean()
+        actor_loss = -Q_pi.mean() + bc_loss
 
         # Optimize Actor
         self.actor_optim.zero_grad()
@@ -286,9 +286,9 @@ class Energy:
         for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        return actor_loss.cpu().detach().numpy().item(), \
-               bc_loss.cpu().detach().numpy().item(), \
-               Q_pi.mean().cpu().detach().numpy().item(), \
+        return actor_loss, \
+               bc_loss, \
+               Q_pi.mean(), \
             # distance.mean().cpu().detach().numpy().item()
         # energy_loss.mean().cpu().detach().numpy().item(), \
 

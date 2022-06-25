@@ -7,15 +7,19 @@ import numpy as np
 import d4rl
 import gym
 import wandb
+import random
 
 
 def main():
     wandb.init(project="iql", entity="facebear")
+    seed = random.randint(0, 1000)
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='antmaze-medium-play-v2')
-    parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--seed', type=int, default=seed)
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args()
+
+    wandb.config.update(args)
 
     dataset, env = d3rlpy.datasets.get_dataset(args.dataset)
     index = np.where(np.logical_and(np.logical_and(dataset.observations[:, 0] >= 0, dataset.observations[:, 0] <= 10), np.logical_and(dataset.observations[:, 1] >= 3.5, dataset.observations[:, 1] <= 4.5)))
@@ -30,6 +34,7 @@ def main():
     reward_scaler = d3rlpy.preprocessing.ReturnBasedRewardScaler(
         multiplier=1000.0)
 
+    d3rlpy.algos.CQL
     iql = d3rlpy.algos.IQL(actor_learning_rate=3e-4,
                            critic_learning_rate=3e-4,
                            batch_size=256,
@@ -49,7 +54,7 @@ def main():
     iql.fit(dataset.episodes,
             eval_episodes=test_episodes,
             n_steps=1000000,
-            n_steps_per_epoch=1000,
+            n_steps_per_epoch=5000,
             save_interval=10,
             callback=callback,
             scorers={

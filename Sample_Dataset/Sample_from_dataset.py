@@ -88,12 +88,12 @@ class ReplayBuffer(object):
         ind = np.random.randint(0, self.size, size=batch_size)  ###################################
 
         return (
-            torch.FloatTensor(self.state[ind]).to(self.device),
-            torch.FloatTensor(self.action[ind]).to(self.device),
-            torch.FloatTensor(self.next_state[ind]).to(self.device),  ####################################
-            torch.FloatTensor(self.next_action[ind]).to(self.device),
-            torch.FloatTensor(self.reward[ind]).to(self.device),
-            torch.FloatTensor(self.not_done[ind]).to(self.device)
+            self.state[ind],
+            self.action[ind],
+            self.next_state[ind],  ####################################
+            self.next_action[ind],
+            self.reward[ind],
+            self.not_done[ind]
         )
 
     def sample_multiple(self, batch_size):
@@ -189,9 +189,9 @@ class ReplayBuffer(object):
         for i in range(int(N / ratio) - 1):
             if 'large' in env_name:
                 if (0 <= dataset['observations'][i, 0] <= 0 and 15 <= dataset['observations'][i, 1] <= 18) \
-                        or (10.5 <= dataset['observations'][i, 0] <= 21 and 7 <= dataset['observations'][i, 1] <= 9) \
-                        or (0 <= dataset['observations'][i, 0] <= 0 and 6.5 <= dataset['observations'][i, 1] <= 9.5) \
-                        or (19 <= dataset['observations'][i, 0] <= 29.5 and 15 <= dataset['observations'][i, 1] <= 17) \
+                        and (10.5 <= dataset['observations'][i, 0] <= 21 and 7 <= dataset['observations'][i, 1] <= 9) \
+                        and (0 <= dataset['observations'][i, 0] <= 0 and 6.5 <= dataset['observations'][i, 1] <= 9.5) \
+                        and (19 <= dataset['observations'][i, 0] <= 29.5 and 15 <= dataset['observations'][i, 1] <= 17) \
                         and toycase:
                     # print('find a point')
                     continue
@@ -268,13 +268,12 @@ class ReplayBuffer(object):
                 np.arange(dataset_size) < dataset_size - 1))
         print('Found %d non-terminal steps out of a total of %d steps.' % (
             len(nonterminal_steps), dataset_size))
-
-        self.state = dataset['observations'][nonterminal_steps]
-        self.action = dataset['actions'][nonterminal_steps]
-        self.next_state = dataset['observations'][nonterminal_steps + 1]  ####################################
-        self.next_action = dataset['actions'][nonterminal_steps + 1]
-        self.reward = dataset['rewards'][nonterminal_steps].reshape(-1, 1)
-        self.not_done = 1. - dataset['terminals'][nonterminal_steps + 1].reshape(-1, 1)
+        self.state = torch.FloatTensor(dataset['observations'][nonterminal_steps]).to(self.device)
+        self.action = torch.FloatTensor(dataset['actions'][nonterminal_steps]).to(self.device)
+        self.next_state = torch.FloatTensor(dataset['observations'][nonterminal_steps + 1]).to(self.device)  ####################################
+        self.next_action = torch.FloatTensor(dataset['actions'][nonterminal_steps + 1]).to(self.device)
+        self.reward = torch.FloatTensor(dataset['rewards'][nonterminal_steps].reshape(-1, 1)).to(self.device)
+        self.not_done = torch.FloatTensor(1. - dataset['terminals'][nonterminal_steps + 1].reshape(-1, 1)).to(self.device)
         self.size = self.state.shape[0]
 
         # min_max normalization
@@ -283,11 +282,11 @@ class ReplayBuffer(object):
             # r_max = np.max(self.reward)
             # r_min = np.min(self.reward)
             # self.reward = (self.reward - r_min) / (r_max - r_min)
-
-        if norm_reward:
-            r_min = self.reward.min(0, keepdims=True)
-            r_max = self.reward.max(0, keepdims=True)
-            self.reward = (self.reward - r_min) / (r_max - r_min)
+        else:
+            if norm_reward:
+                r_min = self.reward.min(0, keepdims=True)[0]
+                r_max = self.reward.max(0, keepdims=True)[0]
+                self.reward = (self.reward - r_min) / (r_max - r_min)
 
         s_mean = self.state.mean(0, keepdims=True)
         s_std = self.state.std(0, keepdims=True)
@@ -305,9 +304,9 @@ class ReplayBuffer(object):
             if scale_action:
                 self.action = (self.action - a_mean) / (a_std + 1e-3)
                 self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
-                return s_min, s_max, a_mean, a_std
+                return s_min.cpu().numpy(), s_max.cpu().numpy(), a_mean.cpu().numpy(), a_std.cpu().numpy()
             else:
-                return s_min, s_max
+                return s_min.cpu().numpy(), s_max.cpu().numpy()
 
         elif scale_state == 'standard':
             # standard normalization
@@ -318,17 +317,17 @@ class ReplayBuffer(object):
                 self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
                 a_max = self.action.max(0, keepdims=True)
                 a_min = self.action.min(0, keepdims=True)
-                return s_mean, s_std, a_mean, a_std, a_max, a_min
+                return s_mean.cpu().numpy(), s_std.cpu().numpy(), a_mean.cpu().numpy(), a_std.cpu().numpy(), a_max.cpu().numpy(), a_min.cpu().numpy()
             else:
-                return s_mean, s_std
+                return s_mean.cpu().numpy(), s_std.cpu().numpy()
 
         else:
             if scale_action:
                 self.action = (self.action - a_mean) / (a_std + 1e-3)
                 self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
-                return s_mean, s_std, a_mean, a_std
+                return s_mean.cpu().numpy(), s_std.cpu().numpy(), a_mean.cpu().numpy(), a_std.cpu().numpy()
             else:
-                return s_mean, s_std
+                return s_mean.cpu().numpy(), s_std.cpu().numpy()
 
     def convert_D4RL_td_lambda(self, dataset, scale_rewards=False, scale_state=False, n=1):
         """

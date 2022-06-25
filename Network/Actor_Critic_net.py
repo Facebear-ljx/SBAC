@@ -211,12 +211,72 @@ class BC_VAE(nn.Module):
         action_recon = self.decode(state, latent_pi)
         return action_recon, mean, sigma
 
+
+class Actor_multinormal_simplified(nn.Module):
+    def __init__(self, num_state, num_action, num_hidden, device):
+        super(Actor_multinormal_simplified, self).__init__()
+        self.device = device
+        self.fc1 = nn.Linear(num_state, num_hidden)
+        self.fc2 = nn.Linear(num_hidden, num_hidden)
+        self.mu_head = nn.Linear(num_hidden, num_action)
+        self.sigma = nn.Parameter(torch.zeros(num_action, dtype=torch.float32))
+
+    def forward(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x)
+        log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+        sigma_tril = torch.diag(sigma)
+
+        a_distribution = MultivariateNormal(mu, sigma_tril)
+        action = a_distribution.rsample()
+        log_pi = a_distribution.log_prob(action)
+        log_pi = torch.unsqueeze(log_pi, dim=1)
+        return action, log_pi, a_distribution
+
+    def get_log_density(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x)
+        log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+        sigma_tril = torch.diag(sigma)
+
+        a_distribution = MultivariateNormal(mu, sigma_tril)
+        log_pi = a_distribution.log_prob(y)
+        log_pi = torch.unsqueeze(log_pi, dim=1)
+        return log_pi
+
+    def get_action(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x)
+        log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+        sigma_tril = torch.diag(sigma)
+
+        a_distribution = MultivariateNormal(mu, sigma_tril)
+        # action = a_distribution.rsample()
+        action = a_distribution.mean
+        return action
+
+
 class Actor_multinormal(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
         super(Actor_multinormal, self).__init__()
         self.device = device
         self.fc1 = nn.Linear(num_state, num_hidden)
-        self.fc2 = nn.Lin.Linear(num_hidden, num_action)
+        self.fc2 = nn.Linear(num_hidden, num_hidden)
+        self.mu_head = nn.Linear(num_hidden, num_action)
         self.sigma_head = nn.Linear(num_hidden, num_action)
 
     def forward(self, x):
@@ -235,13 +295,13 @@ class Actor_multinormal(nn.Module):
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
         action = tanh_distribution.rsample()
-        logp_pi = tanh_distribution.log_prob(action).sum(axis=-1)
+        log_pi = tanh_distribution.log_prob(action).sum(axis=-1)
         # logp_pi -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1)
-        logp_pi = torch.unsqueeze(logp_pi, dim=1)
+        log_pi = torch.unsqueeze(log_pi, dim=1)
 
         # action = torch.tanh(action)
-        return action, logp_pi, a_distribution
-    
+        return action, log_pi, a_distribution
+
     def get_log_density(self, x, y):
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
@@ -262,12 +322,12 @@ class Actor_multinormal(nn.Module):
         a_distribution = MultivariateNormal(mu, sigma_tril)
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
-        
+
         log_pi = tanh_distribution.log_prob(y).sum(axis=-1)
         # a_distribution = Normal(mu, sigma)
         # logp_pi = a_distribution.log_prob(y).sum(axis=-1)
         # logp_pi -= (2 * (np.log(2) - y - F.softplus(-2 * y))).sum(axis=1)
-        logp_pi = torch.unsqueeze(logp_pi, dim=1)
+        log_pi = torch.unsqueeze(log_pi, dim=1)
         return log_pi
 
     def get_action(self, x):
@@ -293,6 +353,7 @@ class Actor_multinormal(nn.Module):
         action = tanh_distribution.rsample()
         # action = torch.tanh(action)
         return action
+
 
 class Actor(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
@@ -435,6 +496,7 @@ class Actor_deterministic(nn.Module):
         a = F.relu(self.fc2(a))
         a = self.action(a)
         return torch.tanh(a) * self.max_action
+
 
 class Double_Critic(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
@@ -668,9 +730,9 @@ class Encoder(nn.Module):
         self.device = device
         self.dim_action = dim_action
         self.dim_state = dim_state
-        self.en1 = nn.Linear(dim_state+dim_action, dim_hidden)
+        self.en1 = nn.Linear(dim_state + dim_action, dim_hidden)
         self.en2 = nn.Linear(dim_hidden, dim_hidden)
-        self.en3 = nn.Linear(dim_hidden, dim_state+dim_action)
+        self.en3 = nn.Linear(dim_hidden, dim_state + dim_action)
 
     def forward(self, state, action):
         if isinstance(state, np.ndarray):
@@ -682,12 +744,13 @@ class Encoder(nn.Module):
         x = F.relu(self.en2(x))
         latent = self.en3(x)
         latent_s = latent[:, 0:self.dim_state]
-        latent_a = latent[:, self.dim_state:self.dim_state+self.dim_action]
+        latent_a = latent[:, self.dim_state:self.dim_state + self.dim_action]
         return latent_s, latent_a
 
 
 class EBM(nn.Module):
-    def __init__(self, num_state, num_action, num_hidden, device, batch_size, negative_samples, negative_policy=10, a_max=1, a_min=-1):
+    def __init__(self, num_state, num_action, num_hidden, device, batch_size, negative_samples, negative_policy=10,
+                 a_max=1, a_min=-1):
         super(EBM, self).__init__()
         self.device = device
         self.batch_size = batch_size
@@ -731,7 +794,8 @@ class EBM(nn.Module):
         action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         action = action.view(self.batch_size * self.negative_samples, self.num_action)
 
-        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(
+            self.device)
         noise = noise_action - action
         norm = torch.norm(noise, dim=1, keepdim=True)
 
@@ -751,7 +815,8 @@ class EBM(nn.Module):
         action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         action = action.view(self.batch_size * self.negative_samples, self.num_action)
 
-        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(
+            self.device)
         noise = noise_action - action
         norm = torch.norm(noise, dim=1, keepdim=True)
 
@@ -771,7 +836,7 @@ class EBM(nn.Module):
         action = y.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         action = action.view(self.batch_size * self.negative_samples, self.num_action)
 
-        noise = (torch.randn([self.batch_size * self.negative_samples, self.num_action])*0.5).to(self.device)
+        noise = (torch.randn([self.batch_size * self.negative_samples, self.num_action]) * 0.5).to(self.device)
         norm = torch.norm(noise, dim=1, keepdim=True)
 
         noise_action = noise + action
@@ -789,7 +854,8 @@ class EBM(nn.Module):
 
         state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         state = state.view(self.batch_size * self.negative_samples, self.num_state)
-        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)  # wtf, noise scale should be larger than the action range
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(
+            self.device)  # wtf, noise scale should be larger than the action range
         # noise_action = (torch.rand([self.batch_size * self.negative_samples, self.num_action]) * self.a_scale * 1.05 + self.a_min).to(
         #     self.device)
         # noise_action = (torch.rand([self.batch_size * self.negative_samples, self.num_action]) * (self.a_max - self.a_min)).to(self.device)  ########################
@@ -817,7 +883,8 @@ class EBM(nn.Module):
 
         state = x.unsqueeze(0).repeat(self.negative_samples, 1, 1)
         state = state.view(self.batch_size * self.negative_samples, self.num_state)
-        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(self.device)  # wtf, noise scale should be larger than the action range
+        noise_action = ((torch.rand([self.batch_size * self.negative_samples, self.num_action]) - 0.5) * 3).to(
+            self.device)  # wtf, noise scale should be larger than the action range
         Negative_E = -self.energy(state, noise_action)
         Negative = torch.exp(Negative_E).view(self.negative_samples, self.batch_size, 1).sum(0)
         Negative_log = torch.log(Negative + 1e-5)

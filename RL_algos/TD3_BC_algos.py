@@ -54,7 +54,7 @@ class TD3_BC:
         # get dataset 1e+6 samples
         self.dataset = self.env.get_dataset()
         self.replay_buffer = ReplayBuffer(state_dim=num_state, action_dim=num_action, device=device)
-        self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio)
+        self.dataset = self.replay_buffer.split_dataset(self.env, self.dataset, ratio=ratio, env_name=env_name)
         self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(self.dataset, scale_rewards=False, scale_state='standard')
 
         # prepare the actor and critic
@@ -154,7 +154,7 @@ class TD3_BC:
         bc_loss = nn.MSELoss()(action_pi, action)
 
         actor_loss = -lmbda * Q_pi.mean() + bc_loss
-
+        # actor_loss = bc_loss
         # Optimize Actor
         self.actor_optim.zero_grad()
         actor_loss.backward()

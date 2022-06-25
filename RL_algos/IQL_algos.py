@@ -6,7 +6,7 @@ import gym
 import os
 import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
-from Network.Actor_Critic_net import Actor, Double_Critic, V_critic, Actor_deterministic, Actor_multinormal
+from Network.Actor_Critic_net import Actor, Double_Critic, V_critic, Actor_deterministic, Actor_multinormal_simplified
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 import datetime
@@ -104,9 +104,9 @@ class IQL:
 
         # prepare the actor and critic
         if self.deterministic:
-            self.actor_net = Actor_multinormal(num_state, num_action, num_hidden, device).float().to(device)
+            self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
         else:
-            self.actor_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
+            self.actor_net = Actor_multinormal_simplified(num_state, num_action, num_hidden, device).float().to(device)
         self.actor_optim = torch.optim.Adam(self.actor_net.parameters(), lr=lr_actor)
         self.actor_lr_schedule = CosineAnnealingLR(self.actor_optim, n_steps)
 

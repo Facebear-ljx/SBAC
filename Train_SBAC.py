@@ -12,7 +12,7 @@ def main():
     parser.add_argument(
         '--lr_actor', type=float, default=3e-4, metavar='lr_actor', help='discount factor (default: 1e-5)')
     parser.add_argument(
-        '--lr_critic', type=float, default=1e-3, metavar='lr_critic', help='discount factor (default: 1e-3)')
+        '--lr_critic', type=float, default=3e-4, metavar='lr_critic', help='discount factor (default: 1e-3)')
     parser.add_argument(
         '--batch_size', type=int, default=256, metavar='BS', help='batch_size (default: 256)')
     parser.add_argument(
@@ -24,10 +24,10 @@ def main():
     parser.add_argument(
         '--alpha', type=float, default=0.01, metavar='alpha', help='alpha (default: 100)')
     parser.add_argument('--skip_steps', default=1, type=int)
-    parser.add_argument('--auto_alpha', default=True, help='auto-update the hyper-parameter alpha (default: True)')
+    parser.add_argument('--auto_alpha', default=False, help='auto-update the hyper-parameter alpha (default: True)')
     parser.add_argument('--device', default='cuda', help='cuda or cpu')
     parser.add_argument('--importance', default=False)
-    parser.add_argument('--env_name', default='hopper-medium-v2', help='choose your mujoco env')
+    parser.add_argument('--env_name', default='antmaze-medium-play-v2', help='choose your mujoco env')
     parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
     args = parser.parse_args()
     wandb.config.update(args)

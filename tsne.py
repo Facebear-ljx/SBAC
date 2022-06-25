@@ -6,15 +6,24 @@ import gym
 import mujoco_py
 
 # Prepare the data
-env_name = 'antmaze-large-play-v2'
+env_name = 'antmaze-medium-play-v2'
 env = gym.make(env_name)
 dataset = env.get_dataset()
 
-x = dataset['observations'][0:100000, 0]
-y = dataset['observations'][0:100000, 1]
-index = np.where(np.logical_and(np.logical_and(x>=10, x<=17), np.logical_and(y>=10, y<=15)))
+x = dataset['observations'][0:1000000, 0]
+y = dataset['observations'][0:1000000, 1]
+a = np.logical_and(np.logical_and(x >= 0, x <= 0), np.logical_and(y >= 6, y <= 9))
+b = np.logical_and(np.logical_and(x >= 0, x <= 0), np.logical_and(y >= 15, y <= 18))
+c = np.logical_and(np.logical_and(x >= 11.5, x <= 20.5), np.logical_and(y >= 11, y <= 13))
+d = np.logical_and(np.logical_and(x >= 4, x <= 13), np.logical_and(y >= 7, y <= 9))
+
+index = np.where(np.logical_or(np.logical_or(a, b), np.logical_or(c, d)))
 x = np.delete(x, index)
 y = np.delete(y, index)
+r = dataset['rewards']
+d = dataset['terminals']
+r = np.delete(r, index)
+d = np.delete(d, index)
 plt.scatter(x, y)
 plt.show()
 # t-SNE
