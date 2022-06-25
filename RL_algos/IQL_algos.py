@@ -14,8 +14,9 @@ import datetime
 EPSILON = 1e-20
 EXP_ADV_MAX = 100
 
+
 def asymmetric_l2_loss(u, tau):
-    return torch.mean(torch.abs(tau - (u < 0).float()) * u**2)
+    return torch.mean(torch.abs(tau - (u < 0).float()) * u ** 2)
 
 
 class IQL:
@@ -24,9 +25,9 @@ class IQL:
                  num_hidden=256,
                  gamma=0.99,
                  soft_update=0.005,
-                #  policy_noise=0.2,
-                #  noise_clip=0.5,
-                #  policy_freq=2,
+                 #  policy_noise=0.2,
+                 #  noise_clip=0.5,
+                 #  policy_freq=2,
                  tau=0.7,
                  beta=3.0,
                  ratio=1,
@@ -117,12 +118,10 @@ class IQL:
         self.v_net = V_critic(num_state, num_hidden, device).float().to(device)
         self.v_optim = torch.optim.Adam(self.v_net.parameters(), lr=lr_v)
 
-
         # Q and Critic file location
         self.current_time = datetime.datetime.now()
         logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}"
         os.makedirs(logdir_name)
-
 
     def learn(self, total_time_step=1e+6):
         """
@@ -147,20 +146,20 @@ class IQL:
             actor_loss, bc_loss = self.train_actor(state, action, advantage)
             if total_it % self.evaluate_freq == 0:
                 evaluate_reward = self.rollout_evaluate()
-                wandb.log({ "evaluate_rewards": evaluate_reward,
-                            "v_mean": v.mean().cpu().detach().numpy().item(),
-                            "v_loss": v_loss.cpu().detach().numpy().item(),
-                            "actor_loss": actor_loss.cpu().detach().numpy().item(),
-                            "bc_loss": bc_loss.mean().cpu().detach().numpy().item(),
-                            "advantage": advantage.mean().cpu().detach().numpy().item(),
-                            "critic_loss": critic_loss.cpu().detach().numpy().item(),
-                            "it_steps": total_it,
-                            })
+                wandb.log({"evaluate_rewards": evaluate_reward,
+                           "v_mean": v.mean().cpu().detach().numpy().item(),
+                           "v_loss": v_loss.cpu().detach().numpy().item(),
+                           "actor_loss": actor_loss.cpu().detach().numpy().item(),
+                           "bc_loss": bc_loss.mean().cpu().detach().numpy().item(),
+                           "advantage": advantage.mean().cpu().detach().numpy().item(),
+                           "critic_loss": critic_loss.cpu().detach().numpy().item(),
+                           "it_steps": total_it,
+                           })
 
                 # if total_it % (self.evaluate_freq * 2) == 0:
                 #     self.save_parameters(evaluate_reward)
             self.total_it += 1
-    
+
     def train_v(self, state, action):
         """
         train Value function that used to calculate the target for Q training
@@ -168,7 +167,7 @@ class IQL:
         with torch.no_grad():
             target_q1, target_q2 = self.critic_target(state, action)
             target_q = torch.min(target_q1, target_q2)
-        
+
         v = self.v_net(state)
         advantage = target_q - v
         v_loss = asymmetric_l2_loss(advantage, self.tau)
@@ -188,7 +187,7 @@ class IQL:
             next_v = self.v_net(next_state)
             target_q = reward + not_done * self.gamma * next_v
         Q1, Q2 = self.critic_net(state, action)
-        critic_loss = (nn.MSELoss()(Q1, target_q) + nn.MSELoss()(Q2, target_q))/2
+        critic_loss = (nn.MSELoss()(Q1, target_q) + nn.MSELoss()(Q2, target_q)) / 2
 
         # Optimize Critic
         self.critic_optim.zero_grad(set_to_none=True)
@@ -199,9 +198,8 @@ class IQL:
         # update the frozen target models
         for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
             target_param.data.copy_(self.soft_update * param.data + (1 - self.soft_update) * target_param.data)
-        
-        return critic_loss
 
+        return critic_loss
 
     def train_actor(self, state, action, advantage):
         """
@@ -210,11 +208,11 @@ class IQL:
         exp_adv = torch.exp(self.beta * advantage.detach()).clamp(max=EXP_ADV_MAX)
         # Actor loss
         if self.deterministic:
-            bc_loss = torch.sum((action - self.actor_net(state))**2, dim=1, keepdim=True)
+            bc_loss = torch.sum((action - self.actor_net(state)) ** 2, dim=1, keepdim=True)
         else:
             log_pi = self.actor_net.get_log_density(state, action)
             bc_loss = -log_pi
-        
+
         actor_loss = torch.mean(exp_adv * bc_loss)
 
         # Optimize Actor
@@ -224,7 +222,6 @@ class IQL:
         self.actor_lr_schedule.step()
 
         return actor_loss, bc_loss
-
 
     def rollout_evaluate(self):
         """
