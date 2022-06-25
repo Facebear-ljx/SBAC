@@ -6,7 +6,7 @@ import gym
 import os
 import d4rl
 from Sample_Dataset.Sample_from_dataset import ReplayBuffer
-from Network.Actor_Critic_net import Actor, Double_Critic, V_critic, Actor_deterministic
+from Network.Actor_Critic_net import Actor, Double_Critic, V_critic, Actor_deterministic, Actor_multinormal
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 import datetime
@@ -104,7 +104,7 @@ class IQL:
 
         # prepare the actor and critic
         if self.deterministic:
-            self.actor_net = Actor_deterministic(num_state, num_action, num_hidden, device).float().to(device)
+            self.actor_net = Actor_multinormal(num_state, num_action, num_hidden, device).float().to(device)
         else:
             self.actor_net = Actor(num_state, num_action, num_hidden, device).float().to(device)
         self.actor_optim = torch.optim.Adam(self.actor_net.parameters(), lr=lr_actor)
@@ -138,20 +138,20 @@ class IQL:
             state, action, next_state, _, reward, not_done = self.replay_buffer.sample(self.batch_size)
 
             # update V
-            v_loss, advantage, v =self.train_v(state, action)
+            v_loss, advantage, v = self.train_v(state, action)
 
             # update Q
             critic_loss = self.train_Q(state, action, next_state, reward, not_done)
 
             # policy update
-            actor_loss = self.train_actor(state, action, advantage)
+            actor_loss, bc_loss = self.train_actor(state, action, advantage)
             if total_it % self.evaluate_freq == 0:
                 evaluate_reward = self.rollout_evaluate()
                 wandb.log({ "evaluate_rewards": evaluate_reward,
                             "v_mean": v.mean().cpu().detach().numpy().item(),
                             "v_loss": v_loss.cpu().detach().numpy().item(),
                             "actor_loss": actor_loss.cpu().detach().numpy().item(),
-                            # "bc_loss": bc_loss.mean().cpu().detach().numpy().item(),
+                            "bc_loss": bc_loss.mean().cpu().detach().numpy().item(),
                             "advantage": advantage.mean().cpu().detach().numpy().item(),
                             "critic_loss": critic_loss.cpu().detach().numpy().item(),
                             "it_steps": total_it,
@@ -223,7 +223,7 @@ class IQL:
         self.actor_optim.step()
         self.actor_lr_schedule.step()
 
-        return actor_loss
+        return actor_loss, bc_loss
 
 
     def rollout_evaluate(self):

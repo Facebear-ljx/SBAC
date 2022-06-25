@@ -1,3 +1,4 @@
+from cmath import tan
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
@@ -210,6 +211,88 @@ class BC_VAE(nn.Module):
         action_recon = self.decode(state, latent_pi)
         return action_recon, mean, sigma
 
+class Actor_multinormal(nn.Module):
+    def __init__(self, num_state, num_action, num_hidden, device):
+        super(Actor_multinormal, self).__init__()
+        self.device = device
+        self.fc1 = nn.Linear(num_state, num_hidden)
+        self.fc2 = nn.Lin.Linear(num_hidden, num_action)
+        self.sigma_head = nn.Linear(num_hidden, num_action)
+
+    def forward(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x)
+        log_sigma = self.sigma_head(x)
+
+        log_sigma = torch.clamp(log_sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+        sigma_tril = torch.diag(sigma)
+
+        a_distribution = MultivariateNormal(mu, sigma_tril)
+        transforms = [torch.distributions.TanhTransform()]
+        tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
+        action = tanh_distribution.rsample()
+        logp_pi = tanh_distribution.log_prob(action).sum(axis=-1)
+        # logp_pi -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1)
+        logp_pi = torch.unsqueeze(logp_pi, dim=1)
+
+        # action = torch.tanh(action)
+        return action, logp_pi, a_distribution
+    
+    def get_log_density(self, x, y):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x)
+        log_sigma = self.sigma_head(x)
+        log_sigma = torch.clip(log_sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+        sigma_tril = torch.diag(sigma)
+
+        y = torch.clip(y, -1. + EPS, 1. - EPS)
+        y = torch.atanh(y)
+
+        mu = torch.clip(mu, MEAN_MIN, MEAN_MAX)
+        a_distribution = MultivariateNormal(mu, sigma_tril)
+        transforms = [torch.distributions.TanhTransform()]
+        tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
+        
+        log_pi = tanh_distribution.log_prob(y).sum(axis=-1)
+        # a_distribution = Normal(mu, sigma)
+        # logp_pi = a_distribution.log_prob(y).sum(axis=-1)
+        # logp_pi -= (2 * (np.log(2) - y - F.softplus(-2 * y))).sum(axis=1)
+        logp_pi = torch.unsqueeze(logp_pi, dim=1)
+        return log_pi
+
+    def get_action(self, x):
+        """
+        generate actions according to the state
+        :param x: state
+        :return: action
+        """
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x)
+        log_sigma = self.sigma_head(x)
+
+        log_sigma = torch.clip(log_sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+        sigma_tril = torch.diag(sigma)
+
+        a_distribution = MultivariateNormal(mu, sigma_tril)
+        transforms = [torch.distributions.TanhTransform()]
+        tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
+        action = tanh_distribution.rsample()
+        # action = torch.tanh(action)
+        return action
 
 class Actor(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
