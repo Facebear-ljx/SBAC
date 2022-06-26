@@ -280,7 +280,7 @@ class Actor_multinormal(nn.Module):
         self.fc1 = nn.Linear(num_state, num_hidden)
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.mu_head = nn.Linear(num_hidden, num_action)
-        self.sigma_head = nn.Linear(num_hidden, num_action)
+        self.sigma = nn.Parameter(torch.zeros(num_action, dtype=torch.float32))
 
     def forward(self, x):
         if isinstance(x, np.ndarray):
@@ -288,9 +288,8 @@ class Actor_multinormal(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
-        log_sigma = self.sigma_head(x)
 
-        log_sigma = torch.clamp(log_sigma, LOG_STD_MIN, LOG_STD_MAX)
+        log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
         sigma_tril = torch.diag(sigma)
 
@@ -298,7 +297,7 @@ class Actor_multinormal(nn.Module):
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
         action = tanh_distribution.rsample()
-        log_pi = tanh_distribution.log_prob(action).sum(axis=-1)
+        log_pi = tanh_distribution.log_prob(action)
         # logp_pi -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1)
         log_pi = torch.unsqueeze(log_pi, dim=1)
 
@@ -313,8 +312,8 @@ class Actor_multinormal(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
-        log_sigma = self.sigma_head(x)
-        log_sigma = torch.clip(log_sigma, LOG_STD_MIN, LOG_STD_MAX)
+
+        log_sigma = torch.clip(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
         sigma_tril = torch.diag(sigma)
 
@@ -323,10 +322,8 @@ class Actor_multinormal(nn.Module):
 
         mu = torch.clip(mu, MEAN_MIN, MEAN_MAX)
         a_distribution = MultivariateNormal(mu, sigma_tril)
-        transforms = [torch.distributions.TanhTransform()]
-        tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
 
-        log_pi = tanh_distribution.log_prob(y).sum(axis=-1)
+        log_pi = a_distribution.log_prob(y)
         # a_distribution = Normal(mu, sigma)
         # logp_pi = a_distribution.log_prob(y).sum(axis=-1)
         # logp_pi -= (2 * (np.log(2) - y - F.softplus(-2 * y))).sum(axis=1)
@@ -344,9 +341,8 @@ class Actor_multinormal(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
-        log_sigma = self.sigma_head(x)
 
-        log_sigma = torch.clip(log_sigma, LOG_STD_MIN, LOG_STD_MAX)
+        log_sigma = torch.clip(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
         sigma_tril = torch.diag(sigma)
 
