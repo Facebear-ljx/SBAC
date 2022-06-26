@@ -154,10 +154,14 @@ class FisherBRC:
             reward = reward + self.reward_bonus
 
             # update Critic
-            critic_loss, critic_loss_in, grad_loss = self.train_Q(state, action, next_state, reward, not_done)
+            critic_loss, \
+            critic_loss_in, \
+            grad_loss, \
+            a_distribution = self.train_Q(state, action, next_state, reward, not_done)
 
             # update actor
-            actor_loss, grad_loss, Q_pi = self.train_actor_with_auto_alpha(state)
+            actor_loss, grad_loss, Q_pi = self.train_actor_with_auto_alpha(state, a_distribution)
+
             if total_it % self.evaluate_freq == 0:
                 evaluate_reward = self.rollout_evaluate()
                 wandb.log({"actor_loss": actor_loss.cpu().detach().numpy().item(),
@@ -166,6 +170,7 @@ class FisherBRC:
                            "grad_loss": grad_loss.cpu().detach().numpy().item(),
                            "Q_pi_mean": Q_pi.mean().cpu().detach().numpy().item(),
                            "evaluate_rewards": evaluate_reward,
+                           "log_alpha": self.log_alpha.cpu().detach().numpy().item(),
                            "it_steps": total_it,
                            })
 
@@ -188,11 +193,11 @@ class FisherBRC:
 
         # gradient loss
         policy_action, _, a_distribution = self.actor_net(state)
-        Q1_ood, Q2_ood = self.get_Q(state, policy_action)
+        O1_ood, O2_ood = self.critic_net(state, policy_action)
 
-        Q1_grads = torch.autograd.grad(Q1_ood.sum(), policy_action, retain_graph=True)[0] ** 2
-        Q2_grads = torch.autograd.grad(Q2_ood.sum(), policy_action, retain_graph=True)[0] ** 2
-        grad_loss = torch.mean(Q1_grads + Q2_grads)
+        O1_grads = torch.autograd.grad(O1_ood.sum(), policy_action, retain_graph=True)[0] ** 2
+        O2_grads = torch.autograd.grad(O2_ood.sum(), policy_action, retain_graph=True)[0] ** 2
+        grad_loss = torch.mean(O1_grads + O2_grads)
 
         # final loss
         critic_loss = critic_loss_in + grad_loss * self.lmbda
@@ -206,7 +211,7 @@ class FisherBRC:
         for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        return critic_loss, critic_loss_in, grad_loss
+        return critic_loss, critic_loss_in, grad_loss, a_distribution
 
     def get_Q_target(self, state, action):
         target_O1, target_O2 = self.critic_target(state, action)
@@ -222,24 +227,31 @@ class FisherBRC:
         Q2 = O2 + log_mu
         return Q1, Q2
 
-    def train_actor_with_auto_alpha(self, state):
+    def get_min_Q(self, state, action):
+        O1, O2 = self.critic_net(state, action)
+        min_O = torch.min(O1, O2)
+        log_mu = self.bc.get_log_density(state, action)
+        min_Q = min_O + log_mu
+        return min_Q
+
+    def train_actor_with_auto_alpha(self, state, a_distribution):
         """
            train the learned policy
         """
         # Actor loss
         action_pi, log_pi, _ = self.actor_net(state)
-        Q1, Q2 = self.get_Q(state, action_pi)
-        Q_pi = torch.min(Q1, Q2)
+
+        # action_pi = a_distribution.rsample()
+        # log_pi = a_distribution.log_prob(action_pi)
+        Q_pi = self.get_min_Q(state, action_pi)
 
         actor_loss = torch.mean(self.alpha().detach() * log_pi - Q_pi)
 
-        aaa = torch.mean(-log_pi - self.target_entropy).detach()
-        alpha_loss = copy.deepcopy(aaa)
-        alpha_loss = self.alpha() * alpha_loss
+        alpha_loss = self.alpha() * torch.mean(-log_pi - self.target_entropy).item()
 
         # Optimize Actor
         self.actor_optim.zero_grad()
-        actor_loss.backward(retain_graph=True)
+        actor_loss.backward()
         self.actor_optim.step()
 
         # Optimize alpha (the auto-adjust temperature in SAC)
