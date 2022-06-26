@@ -96,7 +96,7 @@ class IQL:
             scale_rewards = True
         else:
             scale_rewards = False
-        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL(
+        self.s_mean, self.s_std = self.replay_buffer.convert_D4RL_iql(
             self.dataset,
             scale_rewards=scale_rewards,
             scale_state=scale_state,

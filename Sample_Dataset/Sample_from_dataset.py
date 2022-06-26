@@ -329,6 +329,86 @@ class ReplayBuffer(object):
             else:
                 return s_mean.cpu().numpy(), s_std.cpu().numpy()
 
+    def convert_D4RL_iql(self, dataset, scale_rewards=False, scale_state=False, scale_action=False, norm_reward=False):
+        """
+        convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
+        :param scale_action:
+        :param dataset: d4rl dataset, usually comes from env.get_dataset or replay_buffer.split_dataset
+        :param scale_rewards: whether scale the reward to [0, 1]
+        :param scale_state: whether scale the state to standard gaussian distribution ~ N(0, 1)
+        :return: the mean and standard deviation of states
+        """
+        dataset_size = len(dataset['observations'])
+        dataset['terminals'] = np.squeeze(dataset['terminals'])
+        dataset['rewards'] = np.squeeze(dataset['rewards'])
+
+        # nonterminal_steps, = np.where(
+        #     np.logical_and(
+        #         np.logical_not(dataset['terminals']),
+        #         np.arange(dataset_size) < dataset_size - 1))
+        print('Found non-terminal steps out of a total of %d steps.' % (dataset_size))
+        self.state = torch.FloatTensor(dataset['observations']).to(self.device)
+        self.action = torch.FloatTensor(dataset['actions']).to(self.device)
+        self.next_state = torch.FloatTensor(dataset['next_observations']).to(self.device)  ####################################
+        self.next_action = torch.FloatTensor(dataset['actions']).to(self.device)
+        self.reward = torch.FloatTensor(dataset['rewards'].reshape(-1, 1)).to(self.device)
+        self.not_done = torch.FloatTensor(1. - dataset['terminals'].reshape(-1, 1)).to(self.device)
+        self.size = self.state.shape[0]
+
+        # min_max normalization
+        if scale_rewards:
+            self.reward -= 1.
+            # r_max = np.max(self.reward)
+            # r_min = np.min(self.reward)
+            # self.reward = (self.reward - r_min) / (r_max - r_min)
+        else:
+            if norm_reward:
+                r_min = self.reward.min(0, keepdims=True)[0]
+                r_max = self.reward.max(0, keepdims=True)[0]
+                self.reward = (self.reward - r_min) / (r_max - r_min)
+
+        s_mean = self.state.mean(0, keepdims=True)
+        s_std = self.state.std(0, keepdims=True)
+
+        s_min = self.state.min(0, keepdims=True)
+        s_max = self.state.max(0, keepdims=True)
+
+        a_mean = self.action.mean(0, keepdims=True)
+        a_std = self.action.std(0, keepdims=True)
+
+        if scale_state == 'minmax':
+            # min_max normalization
+            self.state = (self.state - s_min) / (s_max - s_min)
+            self.next_state = (self.next_state - s_min) / (s_max - s_min)
+            if scale_action:
+                self.action = (self.action - a_mean) / (a_std + 1e-3)
+                self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
+                return s_min.cpu().numpy(), s_max.cpu().numpy(), a_mean.cpu().numpy(), a_std.cpu().numpy()
+            else:
+                return s_min.cpu().numpy(), s_max.cpu().numpy()
+
+        elif scale_state == 'standard':
+            # standard normalization
+            self.state = (self.state - s_mean) / (s_std + 1e-3)
+            self.next_state = (self.next_state - s_mean) / (s_std + 1e-3)
+            if scale_action:
+                self.action = (self.action - a_mean) / (a_std + 1e-3)
+                self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
+                a_max = self.action.max(0, keepdims=True)
+                a_min = self.action.min(0, keepdims=True)
+                return s_mean.cpu().numpy(), s_std.cpu().numpy(), a_mean.cpu().numpy(), a_std.cpu().numpy(), a_max.cpu().numpy(), a_min.cpu().numpy()
+            else:
+                return s_mean.cpu().numpy(), s_std.cpu().numpy()
+
+        else:
+            if scale_action:
+                self.action = (self.action - a_mean) / (a_std + 1e-3)
+                self.next_action = (self.next_action - a_mean) / (a_std + 1e-3)
+                return s_mean.cpu().numpy(), s_std.cpu().numpy(), a_mean.cpu().numpy(), a_std.cpu().numpy()
+            else:
+                return s_mean.cpu().numpy(), s_std.cpu().numpy()
+
+
     def convert_D4RL_td_lambda(self, dataset, scale_rewards=False, scale_state=False, n=1):
         """
         convert the D4RL dataset into numpy ndarray, you can select whether normalize the rewards and states
