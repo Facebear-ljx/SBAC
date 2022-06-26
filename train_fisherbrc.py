@@ -20,7 +20,7 @@ def main():
     parser.add_argument('--negative_samples', default=20, type=int)
     parser.add_argument('--negative_policy', default=10, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
-    parser.add_argument('--energy_steps', default=int(1e+5), type=int, help='total iteration steps to train EBM')
+    parser.add_argument('--warmup_steps', default=int(1e+6), type=int, help='total iteration steps to train EBM')
     parser.add_argument('--strong_contrastive', default=False)
     parser.add_argument('--scale_state', default=None)
     parser.add_argument('--scale_action', default=False)
@@ -41,11 +41,9 @@ def main():
                                 device=args.device,
                                 ratio=1,
                                 seed=args.seed,
-                                lmbda_in=args.lmbda_in,
                                 batch_size=args.batch_size,
-                                warmup_steps=args.energy_steps,
-                                strong_contrastive=args.strong_contrastive,
-                                lmbda_ood=args.lmbda_ood,
+                                warmup_steps=args.warmup_steps,
+                                lmbda=args.lmbda_ood,
                                 scale_state=args.scale_state,
                                 scale_action=args.scale_action,
                                 lr_bc=args.lr_ebm,

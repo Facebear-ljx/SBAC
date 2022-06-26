@@ -20,38 +20,29 @@ class FisherBRC:
                  num_hidden=256,
                  gamma=0.995,
                  tau=0.005,
-                 policy_noise=0.2,
-                 noise_clip=0.5,
                  policy_freq=2,
-                 lmbda_in=2.5,
                  ratio=1,
                  seed=0,
                  batch_size=256,
                  warmup_steps=int(5e+5),
-                 strong_contrastive=False,
                  scale_state='minmax',
                  scale_action=True,
-                 lmbda_max=100.,
-                 lmbda_ood=0.15,
-                 lmbda_thre=0.,
+                 lmbda=0.15,
+                 reward_bonus=5.0,
                  lr_bc=3e-4,
                  lr_actor=3e-4,
                  lr_critic=3e-4,
-                 toycase=False,
-                 sparse=False,
                  evaluate_freq=5000,
                  evalute_episodes=10,
                  device='cpu'):
         """
-        Facebear's implementation of TD3_BC (A Minimalist Approach to Offline Reinforcement Learning)
-        Paper: https://arxiv.org/pdf/2106.06860.pdf
+        Facebear's implementation of Fisher_BRC
+        Paper:
 
         :param env_name: your gym environment name
         :param num_hidden: the number of the units of the hidden layer of your network
         :param gamma: discounting factor of the cumulated reward
         :param tau: soft update
-        :param policy_noise:
-        :param noise_clip:
         :param policy_freq: delayed policy update frequency
         :param alpha: the hyper-parameter in equation
         :param ratio:
@@ -60,20 +51,17 @@ class FisherBRC:
         super(FisherBRC, self).__init__()
 
         # hyper-parameters
-        self.strong_contrastive = strong_contrastive
         self.gamma = gamma
         self.tau = tau
         self.policy_freq = policy_freq
         self.evaluate_freq = evaluate_freq
         self.evaluate_episodes = evalute_episodes
         self.warmup_steps = warmup_steps
-        self.lmbda_in = lmbda_in
+        self.reward_bonus = reward_bonus
         self.batch_size = batch_size
         self.device = device
         self.max_action = 1.
-        self.lmbda_max = lmbda_max
-        self.lmbda_ood = lmbda_ood
-        self.lmbda_thre = lmbda_thre
+        self.lmbda = lmbda
         self.scale_state = scale_state
         self.scale_action = scale_action
         self.total_it = 0
@@ -110,7 +98,6 @@ class FisherBRC:
 
         # prepare the actor and critic
         self.actor_net = Actor_multinormal(num_state, num_action, num_hidden, device).float().to(device)
-        self.actor_target = copy.deepcopy(self.actor_net)
         self.actor_optim = torch.optim.Adam(self.actor_net.parameters(), lr=lr_actor)
 
         self.critic_net = Double_Critic(num_state, num_action, num_hidden, device).float().to(device)
@@ -121,7 +108,8 @@ class FisherBRC:
         self.bc_optim = torch.optim.Adam(self.bc.parameters(), lr=lr_bc)
 
         self.log_alpha = torch.tensor(np.log(1.0), requires_grad=True)
-        self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=3e-4)
+        self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=3e-4)
+        self.target_entropy = -num_action
 
         # Q and Critic file location
         self.current_time = datetime.datetime.now()
@@ -158,110 +146,110 @@ class FisherBRC:
         :param total_time_step: the total iteration times for training Fisher_BRC
         :return: None
         """
+        self.warm_up(self.warmup_steps)
+
         for total_it in tqdm(range(1, int(total_time_step) + 1)):
 
             # sample data
             state, action, next_state, reward, not_done = self.replay_buffer.sample_w_o_next_acion(self.batch_size)
+            reward = reward + self.reward_bonus
 
             # update Critic
-            critic_loss_in, critic_loss_ood = self.train_Q_dis(state, action, next_state, reward, not_done)
+            critic_loss, critic_loss_in, grad_loss = self.train_Q(state, action, next_state, reward, not_done)
 
             # delayed policy update
             if total_it % self.policy_freq == 0:
-                actor_loss, bc_loss, Q_pi_mean = self.train_actor_with_auto_alpha(state, action)
+                actor_loss, grad_loss, Q_pi = self.train_actor_with_auto_alpha(state, action)
                 if total_it % self.evaluate_freq == 0:
                     evaluate_reward = self.rollout_evaluate()
                     wandb.log({"actor_loss": actor_loss.cpu().detach().numpy().item(),
-                               "bc_loss": bc_loss.cpu().detach().numpy().item(),
-                               "critic_loss_ood": critic_loss_ood.cpu().detach().numpy().item(),
+                               "critic_loss": critic_loss.cpu().detach().numpy().item(),
                                "critic_loss_in": critic_loss_in.cpu().detach().numpy().item(),
-                               "Q_pi_mean": Q_pi_mean.cpu().detach().numpy().item(),
-                               # "energy": energy,
-                               # "distance_mean": energy_mean,
+                               "grad_loss": grad_loss.cpu().detach().numpy().item(),
+                               "Q_pi_mean": Q_pi.mean().cpu().detach().numpy().item(),
                                "evaluate_rewards": evaluate_reward,
-                               # "dual_alpha": self.auto_alpha.detach(),
                                "it_steps": total_it,
-                               # "log_barrier": log_barrier
                                })
 
                     if total_it % (self.evaluate_freq * 2) == 0:
                         self.save_parameters(evaluate_reward)
             self.total_it += 1
 
-    def train_Q_dis(self, state, action, next_state, reward, not_done):
+    def train_Q(self, state, action, next_state, reward, not_done):
         """
-        train the Q function that incorporates distance property
+        train the Q function: Q(s,a) = O(s,a) + log \mu(s,a)
         """
         # in-distribution loss
         with torch.no_grad():
-            noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
-            next_action = (self.actor_target(next_state) + noise).clamp(-self.max_action, self.max_action)
-
-            target_Q1, target_Q2 = self.critic_target(next_state, next_action)
-            # distance_target = self.ebm.energy(next_state, next_action)
-            target_Q = torch.min(target_Q1, target_Q2)
-            # target_Q = target_Q - self.lmbda_in * distance_target
+            next_action = self.actor_net.get_action(next_state)
+            target_Q = self.get_Q_target(next_state, next_action)
             target_Q = reward + not_done * self.gamma * target_Q
-        Q1, Q2 = self.critic_net(state, action)
+
+        Q1, Q2 = self.get_Q(state, action)
         critic_loss_in = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q)
 
-        # out-distribution loss
-        action_ood = self.actor_net(state)
-        Q1_ood, Q2_ood = self.critic_net(state, action_ood)
+        # gradient loss
+        policy_action = self.actor_net.get_action(state)
+        Q1_ood, Q2_ood = self.get_Q(state, policy_action)
 
-        # distance_ood = self.ebm.energy(state, action_ood)
-        with torch.no_grad():
-            target_ood = torch.min(Q1_ood, Q2_ood)
-            # target_in = torch.max(Q1, Q2)
-            # target_ood = target_ood - self.lmbda_ood * distance_ood
-        critic_loss_ood = nn.MSELoss()(Q1_ood, target_ood) + nn.MSELoss()(Q2_ood, target_ood)
-        # critic_loss_ = nn.MSELoss()(Q1, target_in) + nn.MSELoss()(Q2, target_in)
+        Q1_grads = torch.autograd.grad(Q1_ood.sum(), policy_action)[0] ** 2
+        Q2_grads = torch.autograd.grad(Q2_ood.sum(), policy_action)[0] ** 2
+        grad_loss = torch.mean(Q1_grads + Q2_grads)
+
         # final loss
-        critic_loss = critic_loss_in + critic_loss_ood * self.lmbda_ood
+        critic_loss = critic_loss_in + grad_loss * self.lmbda
 
         # Optimize Critic
         self.critic_optim.zero_grad()
         critic_loss.backward()
-        # torch.nn.utils.clip_grad_norm_(self.critic_net.parameters(), 5.0)
         self.critic_optim.step()
-        return critic_loss_in, critic_loss_ood
+
+        # update frozen target critic network
+        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return critic_loss, critic_loss_in, grad_loss
+
+    def get_Q_target(self, state, action):
+        target_O1, target_O2 = self.critic_target(state, action)
+        target_O = torch.min(target_O1, target_O2)
+        log_mu = self.bc.get_log_density(state, action)
+        target_Q = target_O + log_mu
+        return target_Q
+
+    def get_Q(self, state, action):
+        O1, O2 = self.critic_net(state, action)
+        log_mu = self.bc.get_log_density(state, action)
+        Q1 = O1 + log_mu
+        Q2 = O2 + log_mu
+        return Q1, Q2
 
     def train_actor_with_auto_alpha(self, state, action):
         """
-               train the learned policy
-               """
+           train the learned policy
+        """
         # Actor loss
-        action_pi = self.actor_net(state)
+        action_pi, log_pi, _ = self.actor_net(state)
+        Q1, Q2 = self.get_Q(state, action_pi)
+        Q_pi = torch.min(Q1, Q2)
+        actor_loss = torch.mean(self.alpha() * log_pi - Q_pi)
 
-        # Q1, Q2 = self.critic_net(state, action_pi)
-        # Q_pi = torch.min(Q1, Q2)
-        # Q_pi = Q1
-
-        Q_pi = self.critic_net.Q1(state, action_pi)
-        # distance = self.ebm.energy(state, action_pi)
-        # lmbda = self.alpha / Q_pi.abs().mean().detach()
-
-        bc_loss = nn.MSELoss()(action_pi, action)
-
-        actor_loss = -Q_pi.mean() + bc_loss
+        alpha_loss = torch.mean(self.alpha() * (-log_pi - self.target_entropy))
 
         # Optimize Actor
         self.actor_optim.zero_grad()
         actor_loss.backward()
         self.actor_optim.step()
 
-        # update the frozen target models
-        for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        # Optimize alpha (the auto-adjust temperature in SAC)
+        self.alpha_optim.zero_grad()
+        alpha_loss.backward()
+        self.actor_optim.step()
 
-        for param, target_param in zip(self.actor_net.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        return actor_loss, alpha_loss, Q_pi
 
-        return actor_loss, \
-               bc_loss, \
-               Q_pi.mean(), \
-            # distance.mean().cpu().detach().numpy().item()
-        # energy_loss.mean().cpu().detach().numpy().item(), \
+    def alpha(self):
+        return torch.exp(self.log_alpha)
 
     def train_bc(self, state, action):
         log_pi = self.bc.get_log_density(state, action)
