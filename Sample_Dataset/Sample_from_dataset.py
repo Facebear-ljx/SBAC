@@ -96,6 +96,18 @@ class ReplayBuffer(object):
             self.not_done[ind]
         )
 
+    # Offline and Online sample data from replay buffer function
+    def sample_w_o_next_acion(self, batch_size):
+        ind = np.random.randint(0, self.size, size=batch_size)  ###################################
+
+        return (
+            self.state[ind],
+            self.action[ind],
+            self.next_state[ind],  ####################################
+            self.reward[ind],
+            self.not_done[ind]
+        )
+
     def sample_multiple(self, batch_size):
         """
         used for convert_D4RL_macro
