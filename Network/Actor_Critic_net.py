@@ -1,3 +1,4 @@
+import datetime
 from cmath import tan
 import torch.nn as nn
 import torch
@@ -272,6 +273,20 @@ class Actor_multinormal_simplified(nn.Module):
         action = a_distribution.mean
         return action
 
+    def get_dist(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x)
+        mu = torch.tanh(mu)
+        log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+        sigma_tril = torch.diag(sigma)
+        a_distribution = MultivariateNormal(mu, sigma_tril)
+
+        return a_distribution
+
 
 class Actor_multinormal(nn.Module):
     def __init__(self, num_state, num_action, num_hidden, device):
@@ -282,22 +297,46 @@ class Actor_multinormal(nn.Module):
         self.mu_head = nn.Linear(num_hidden, num_action)
         self.sigma = nn.Parameter(torch.zeros(num_action, dtype=torch.float32))
 
+    def tranfer_dist_cuda(self, a_dist):
+        """
+        transfer multivarirate distritbution from cpu to cuda.
+        The creation of a multivariatenormal distribution is time consuming on GPU but is fast on cpu.
+        So, I firstly create it on cpu and then deploy it to cuda.
+        However, this operation still seems slower than directly set action.cuda() and log_pi.cuda().
+        :param a_dist:
+        :return:
+        """
+        if self.device == 'cuda':
+            a_dist.loc = a_dist.loc.cuda()
+            a_dist._unbroadcasted_scale_tril = a_dist._unbroadcasted_scale_tril.cuda()
+            # a_dist.loc.to(self.device)
+            # a_dist._unbroadcasted_scale_tril.to(self.device)
+        return a_dist
+
     def forward(self, x):
+        """
+
+        :param x:
+        :return: a_distribution: cpu !!!!!!!!!!!
+        """
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        mu = self.mu_head(x)
+        mu = self.mu_head(x).cpu()
 
         log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma)
+        sigma_tril = torch.diag(sigma).cpu()
 
         a_distribution = MultivariateNormal(mu, sigma_tril)
+
+        # a_distribution = self.tranfer_dist_cuda(a_distribution)  # cuda
+
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
         action = tanh_distribution.rsample()
-        log_pi = tanh_distribution.log_prob(action)
+        log_pi = tanh_distribution.log_prob(action).to(self.device)
         # logp_pi -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1)
         log_pi = torch.unsqueeze(log_pi, dim=1)
 
@@ -311,19 +350,21 @@ class Actor_multinormal(nn.Module):
             y = torch.tensor(y, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        mu = self.mu_head(x)
+        mu = self.mu_head(x).cpu()
 
         log_sigma = torch.clip(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma)
+        sigma_tril = torch.diag(sigma).cpu()
 
         y = torch.clip(y, -1. + EPS, 1. - EPS)
-        y = torch.atanh(y)
+        y = torch.atanh(y).cpu()
 
         mu = torch.clip(mu, MEAN_MIN, MEAN_MAX)
-        a_distribution = MultivariateNormal(mu, sigma_tril)
+        a_distribution = MultivariateNormal(mu, sigma_tril)  # cpu
 
-        log_pi = a_distribution.log_prob(y)
+        # a_distribution = self.tranfer_dist_cuda(a_distribution)  # cuda
+
+        log_pi = a_distribution.log_prob(y).to(self.device)
         # a_distribution = Normal(mu, sigma)
         # logp_pi = a_distribution.log_prob(y).sum(axis=-1)
         # logp_pi -= (2 * (np.log(2) - y - F.softplus(-2 * y))).sum(axis=1)
@@ -340,18 +381,54 @@ class Actor_multinormal(nn.Module):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        mu = self.mu_head(x)
+        mu = self.mu_head(x).cpu()
 
         log_sigma = torch.clip(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma)
+        sigma_tril = torch.diag(sigma).cpu()
 
-        a_distribution = MultivariateNormal(mu, sigma_tril)
+        a_distribution = MultivariateNormal(loc=mu, scale_tril=sigma_tril)  # multivariate Normal is faster in cpu
+
+        # a_distribution = self.tranfer_dist_cuda(a_distribution)
+
+        a_distribution.rsample()
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
-        action = tanh_distribution.rsample()
+        action = tanh_distribution.rsample().to(self.device)
         # action = torch.tanh(action)
         return action
+
+    def get_dist(self, x):
+        """
+
+        :param x: state
+        :return: tanh_distritbution: cpu !!!!!!!!!!!!!!!!!!!!!!
+        """
+        # start_inference = datetime.datetime.now()
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float).to(self.device)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        mu = self.mu_head(x).cpu()
+
+        log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = torch.exp(log_sigma)
+        sigma_tril = torch.diag(sigma).cpu()
+        # end_inference = datetime.datetime.now()
+        # inference_time = (end_inference - start_inference).microseconds
+
+        a_distribution = MultivariateNormal(mu, sigma_tril)  # main time consumer
+        # start_transformation = datetime.datetime.now()
+        # a_distribution = self.tranfer_dist_cuda(a_distribution)  # cuda
+
+        # end_transformation = datetime.datetime.now()
+        transforms = [torch.distributions.TanhTransform()]
+        tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
+
+        # transformation_time = (end_transformation - start_transformation).microseconds
+        # print(transformation_time)
+        # print(inference_time)
+        return tanh_distribution
 
 
 class Actor(nn.Module):

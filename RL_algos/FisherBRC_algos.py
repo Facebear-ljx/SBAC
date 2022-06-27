@@ -92,7 +92,7 @@ class FisherBRC:
             scale_rewards=scale_rewards,
             scale_state=scale_state,
             scale_action=scale_action,
-            norm_reward=True
+            norm_reward=False
         )
 
         # prepare the actor and critic
@@ -115,7 +115,7 @@ class FisherBRC:
         logdir_name = f"./Model/{self.env_name}/{self.current_time}+{self.seed}"
         os.makedirs(logdir_name)
 
-    def warm_up(self, warm_time_step=1e+5):
+    def warm_up(self, warm_time_step=1e+5, evaluate=False):
         bc_model_save_path = f"./Model/{self.env_name}/fisherbrc/bc/multivariate_normal_bc.pth"
         bc_save_dir = f"./Model/{self.env_name}/fisherbrc/bc/"
         if not os.path.exists(bc_model_save_path):
@@ -125,11 +125,12 @@ class FisherBRC:
 
                 bc_loss = self.train_bc(state, action)
 
-                if total_it % self.evaluate_freq == 0:
-                    evaluate_reward = self.rollout_evaluate_bc()
-                    wandb.log({"bc_reward": evaluate_reward,
-                               "bc_loss": bc_loss.cpu().detach().numpy().item(),
-                               "warmup_steps": total_it})
+                if evaluate:
+                    if total_it % self.evaluate_freq == 0:
+                        evaluate_reward = self.rollout_evaluate_bc()
+                        wandb.log({"bc_reward": evaluate_reward,
+                                   "bc_loss": bc_loss.cpu().detach().numpy().item(),
+                                   "warmup_steps": total_it})
 
             if not os.path.exists(bc_save_dir):
                 os.makedirs(bc_save_dir)
@@ -150,17 +151,31 @@ class FisherBRC:
         for total_it in tqdm(range(1, int(total_time_step) + 1)):
 
             # sample data
+            sample_start_time = datetime.datetime.now()
             state, action, next_state, reward, not_done = self.replay_buffer.sample_w_o_next_acion(self.batch_size)
             reward = reward + self.reward_bonus
+            sample_end_time = datetime.datetime.now()
+            sample_time_duration = (sample_end_time - sample_start_time).microseconds
 
             # update Critic
+            critic_start_time = datetime.datetime.now()
             critic_loss, \
             critic_loss_in, \
             grad_loss, \
-            a_distribution = self.train_Q(state, action, next_state, reward, not_done)
+            dis_pi, \
+            dis_mu = self.train_Q(state, action, next_state, reward, not_done)
+            critic_end_time = datetime.datetime.now()
+            critic_time = (critic_end_time - critic_start_time).microseconds
 
             # update actor
-            actor_loss, grad_loss, Q_pi = self.train_actor_with_auto_alpha(state, a_distribution)
+            actor_start_time = datetime.datetime.now()
+            actor_loss, alpha_loss, Q_pi = self.train_actor_with_auto_alpha(state, dis_mu, dis_pi)
+            actor_end_time = datetime.datetime.now()
+            actor_time = (actor_end_time - actor_start_time).microseconds
+
+            wandb.log({"sample_time": sample_time_duration,
+                       "critic_time": critic_time,
+                       "actor_time": actor_time})
 
             if total_it % self.evaluate_freq == 0:
                 evaluate_reward = self.rollout_evaluate()
@@ -171,6 +186,7 @@ class FisherBRC:
                            "Q_pi_mean": Q_pi.mean().cpu().detach().numpy().item(),
                            "evaluate_rewards": evaluate_reward,
                            "log_alpha": self.log_alpha.cpu().detach().numpy().item(),
+                           "alpha_loss": alpha_loss.cpu().detach().numpy().item(),
                            "it_steps": total_it,
                            })
 
@@ -184,34 +200,43 @@ class FisherBRC:
         """
         # in-distribution loss
         with torch.no_grad():
-            next_action = self.actor_net.get_action(next_state)
-            target_Q = self.get_Q_target(next_state, next_action)
+            next_action = self.actor_net.get_action(next_state)  # 1
+            target_Q = self.get_Q_target(next_state, next_action)  # 2
             target_Q = reward + not_done * self.gamma * target_Q
 
-        Q1, Q2 = self.get_Q(state, action)
+        Q1, Q2, dis_mu = self.get_Q(state, action)  # 3
         critic_loss_in = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q)
 
         # gradient loss
-        policy_action, _, a_distribution = self.actor_net(state)
+        dis_pi = self.actor_net.get_dist(state)
+        policy_action = dis_pi.sample().to(self.device)
+        policy_action.requires_grad_(True)
+
         O1_ood, O2_ood = self.critic_net(state, policy_action)
 
-        O1_grads = torch.autograd.grad(O1_ood.sum(), policy_action, retain_graph=True)[0] ** 2
-        O2_grads = torch.autograd.grad(O2_ood.sum(), policy_action, retain_graph=True)[0] ** 2
-        grad_loss = torch.mean(O1_grads + O2_grads)
+        O1_grads = torch.autograd.grad(O1_ood.sum() + O2_ood.sum(), policy_action)[0] ** 2
+        # O2_grads = torch.autograd.grad(O2_ood.sum(), policy_action)[0] ** 2
+        grad_loss = torch.mean(O1_grads)
 
         # final loss
         critic_loss = critic_loss_in + grad_loss * self.lmbda
 
         # Optimize Critic
-        self.critic_optim.zero_grad()
+        critic_start = datetime.datetime.now()
+        self.critic_optim.zero_grad(set_to_none=True)
         critic_loss.backward()
         self.critic_optim.step()
+        critic_end = datetime.datetime.now()
 
+        critic_optimize_time = (critic_end - critic_start).microseconds
+        wandb.log({
+            "critic_optimize_time": critic_optimize_time
+        })
         # update frozen target critic network
         for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        return critic_loss, critic_loss_in, grad_loss, a_distribution
+        return critic_loss, critic_loss_in, grad_loss, dis_pi, dis_mu
 
     def get_Q_target(self, state, action):
         target_O1, target_O2 = self.critic_target(state, action)
@@ -222,42 +247,56 @@ class FisherBRC:
 
     def get_Q(self, state, action):
         O1, O2 = self.critic_net(state, action)
-        log_mu = self.bc.get_log_density(state, action)
+        dis_mu = self.bc.get_dist(state)
+        log_mu = dis_mu.log_prob(action.cpu()).detach().to(self.device)  # TODO
         Q1 = O1 + log_mu
         Q2 = O2 + log_mu
-        return Q1, Q2
+        return Q1, Q2, dis_mu
 
-    def get_min_Q(self, state, action):
+    def get_min_Q(self, state, action, dis_mu):
         O1, O2 = self.critic_net(state, action)
         min_O = torch.min(O1, O2)
-        log_mu = self.bc.get_log_density(state, action)
+        log_mu = dis_mu.log_prob(action.cpu()).to(self.device)
         min_Q = min_O + log_mu
         return min_Q
 
-    def train_actor_with_auto_alpha(self, state, a_distribution):
+    def train_actor_with_auto_alpha(self, state, dis_mu, dis_pi):
         """
            train the learned policy
         """
         # Actor loss
-        action_pi, log_pi, _ = self.actor_net(state)
-
+        # action_pi, log_pi, _ = self.actor_net(state)
+        action_pi = dis_pi.rsample()
+        log_pi = dis_pi.log_prob(action_pi).to(self.device)
+        action_pi = action_pi.to(self.device)
         # action_pi = a_distribution.rsample()
         # log_pi = a_distribution.log_prob(action_pi)
-        Q_pi = self.get_min_Q(state, action_pi)
+        Q_pi = self.get_min_Q(state, action_pi, dis_mu)
 
+        time_start = datetime.datetime.now()
         actor_loss = torch.mean(self.alpha().detach() * log_pi - Q_pi)
 
         alpha_loss = self.alpha() * torch.mean(-log_pi - self.target_entropy).item()
-
+        # time_cal_in_actor = datetime.datetime.now()
         # Optimize Actor
-        self.actor_optim.zero_grad()
+        self.actor_optim.zero_grad(set_to_none=True)
         actor_loss.backward()
         self.actor_optim.step()
 
+        # start_alpha = datetime.datetime.now()
         # Optimize alpha (the auto-adjust temperature in SAC)
-        self.alpha_optim.zero_grad()
+        self.alpha_optim.zero_grad(set_to_none=True)
         alpha_loss.backward()
-        self.actor_optim.step()
+        self.alpha_optim.step()
+
+        time_end = datetime.datetime.now()
+        time = (time_end - time_start).microseconds
+        # time_calculation = (time_cal_in_actor - time_start).microseconds
+        # time_alpha_update = (time_end - start_alpha).microseconds
+        wandb.log({"actor_optimize_time": time,
+                   # "time_alpha_update": time_alpha_update
+                   # "calculation_in_actor": time_calculation
+                   })
 
         return actor_loss, alpha_loss, Q_pi
 
