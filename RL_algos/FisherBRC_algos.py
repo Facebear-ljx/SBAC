@@ -131,9 +131,9 @@ class FisherBRC:
 
                 if evaluate:
                     if total_it % 10000 == 0:
-                        # evaluate_reward = self.rollout_evaluate_bc()
+                        evaluate_reward = self.rollout_evaluate_bc()
                         wandb.log({
-                                   # "bc_reward": evaluate_reward,
+                                   "bc_reward": evaluate_reward,
                                    "bc_loss": bc_loss.cpu().detach().numpy().item(),
                                    "bc_alpha_loss": bc_alpha_loss.cpu().detach().numpy().item(),
                                    "entropy": entropy.mean().cpu().detach().numpy().item(),
@@ -257,6 +257,7 @@ class FisherBRC:
     def get_Q(self, state, action):
         O1, O2 = self.critic_net(state, action)
         dis_mu = self.bc.get_dist(state)
+        action = torch.clip(action, min=-self.max_action+1e-5, max=self.max_action-1e-5)
         log_mu = torch.unsqueeze(dis_mu.log_prob(action.cpu()).detach().to(self.device), dim=1)
         Q1 = O1 + log_mu
         Q2 = O2 + log_mu
@@ -276,6 +277,7 @@ class FisherBRC:
         # Actor loss
         # action_pi, log_pi, _ = self.actor_net(state)
         action_pi = dis_pi.rsample()
+        action_pi = torch.clip(action_pi, min=-self.max_action+1e-5, max=self.max_action-1e-5)
         log_pi = torch.unsqueeze(dis_pi.log_prob(action_pi).to(self.device), dim=1)
         action_pi = action_pi.to(self.device)
         # action_pi = a_distribution.rsample()
@@ -318,9 +320,12 @@ class FisherBRC:
     def train_bc(self, state, action):
         bc_dist = self.bc.get_dist(state)
 
+        action = torch.clip(action, min=-self.max_action+1e-5, max=self.max_action-1e-5)
         log_mu = bc_dist.log_prob(action.cpu()).to(self.device)
 
         sampled_actions = bc_dist.sample()
+        sampled_actions = torch.clip(sampled_actions, min=-self.max_action+1e-5, max=self.max_action-1e-5)
+
         entropy = - bc_dist.log_prob(sampled_actions).to(self.device)
 
         bc_loss = - torch.mean(log_mu + self.bc_alpha().detach() * entropy)
