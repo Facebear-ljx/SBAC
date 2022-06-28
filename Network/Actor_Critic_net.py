@@ -391,7 +391,6 @@ class Actor_multinormal(nn.Module):
 
         # a_distribution = self.tranfer_dist_cuda(a_distribution)
 
-        a_distribution.rsample()
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
         action = tanh_distribution.rsample().to(self.device)

@@ -214,7 +214,7 @@ class FisherBRC:
 
         O1_ood, O2_ood = self.critic_net(state, policy_action)
 
-        O1_grads = torch.autograd.grad(O1_ood.sum() + O2_ood.sum(), policy_action)[0] ** 2
+        O1_grads = torch.square(torch.autograd.grad(O1_ood.sum() + O2_ood.sum(), policy_action,  create_graph=True)[0])
         # O2_grads = torch.autograd.grad(O2_ood.sum(), policy_action)[0] ** 2
         grad_loss = torch.mean(O1_grads)
 
@@ -248,7 +248,7 @@ class FisherBRC:
     def get_Q(self, state, action):
         O1, O2 = self.critic_net(state, action)
         dis_mu = self.bc.get_dist(state)
-        log_mu = dis_mu.log_prob(action.cpu()).detach().to(self.device)  # TODO
+        log_mu = torch.unsqueeze(dis_mu.log_prob(action.cpu()).detach().to(self.device), dim=1)
         Q1 = O1 + log_mu
         Q2 = O2 + log_mu
         return Q1, Q2, dis_mu
@@ -256,7 +256,7 @@ class FisherBRC:
     def get_min_Q(self, state, action, dis_mu):
         O1, O2 = self.critic_net(state, action)
         min_O = torch.min(O1, O2)
-        log_mu = dis_mu.log_prob(action.cpu()).to(self.device)
+        log_mu = torch.unsqueeze(dis_mu.log_prob(action.cpu()).to(self.device), dim=1)
         min_Q = min_O + log_mu
         return min_Q
 
@@ -267,7 +267,7 @@ class FisherBRC:
         # Actor loss
         # action_pi, log_pi, _ = self.actor_net(state)
         action_pi = dis_pi.rsample()
-        log_pi = dis_pi.log_prob(action_pi).to(self.device)
+        log_pi = torch.unsqueeze(dis_pi.log_prob(action_pi).to(self.device), dim=1)
         action_pi = action_pi.to(self.device)
         # action_pi = a_distribution.rsample()
         # log_pi = a_distribution.log_prob(action_pi)
