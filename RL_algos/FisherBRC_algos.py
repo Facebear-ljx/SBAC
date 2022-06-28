@@ -10,7 +10,7 @@ import numpy as np
 from Network.Actor_Critic_net import Actor_multinormal, Double_Critic
 from tqdm import tqdm
 import datetime
-
+from torch.optim.lr_scheduler import MultiStepLR
 EPSILON = 1e-20
 
 
@@ -105,10 +105,14 @@ class FisherBRC:
 
         self.bc = Actor_multinormal(num_state, num_action, num_hidden, device).float().to(device)
         self.bc_optim = torch.optim.Adam(self.bc.parameters(), lr=lr_bc)
+        self.bc_scheduler = MultiStepLR(self.bc_optim, milestones=[800_000, 900_000], gamma=0.1)
 
         self.log_alpha = torch.tensor(np.log(1.0), requires_grad=True)
         self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=3e-4)
         self.target_entropy = -num_action
+
+        self.bc_log_alpha = torch.tensor(np.log(1.0), requires_grad=True)
+        self.bc_alpha_optim = torch.optim.Adam([self.bc_log_alpha], lr=3e-4)
 
         # Q and Critic file location
         self.current_time = datetime.datetime.now()
@@ -116,20 +120,24 @@ class FisherBRC:
         os.makedirs(logdir_name)
 
     def warm_up(self, warm_time_step=1e+5, evaluate=False):
-        bc_model_save_path = f"./Model/{self.env_name}/fisherbrc/bc/multivariate_normal_bc.pth"
+        bc_model_save_path = f"./Model/{self.env_name}/fisherbrc/bc/multivariate_normal_bc_alpha.pth"
         bc_save_dir = f"./Model/{self.env_name}/fisherbrc/bc/"
         if not os.path.exists(bc_model_save_path):
             print(f"pretrain bc model not found, start pretrain and save the model to {bc_model_save_path}")
             for total_it in tqdm(range(1, int(warm_time_step) + 1)):
                 state, action, _, _, _ = self.replay_buffer.sample_w_o_next_acion(self.batch_size)
 
-                bc_loss = self.train_bc(state, action)
+                bc_loss, bc_alpha_loss, entropy = self.train_bc(state, action)
 
                 if evaluate:
-                    if total_it % self.evaluate_freq == 0:
-                        evaluate_reward = self.rollout_evaluate_bc()
-                        wandb.log({"bc_reward": evaluate_reward,
+                    if total_it % 10000 == 0:
+                        # evaluate_reward = self.rollout_evaluate_bc()
+                        wandb.log({
+                                   # "bc_reward": evaluate_reward,
                                    "bc_loss": bc_loss.cpu().detach().numpy().item(),
+                                   "bc_alpha_loss": bc_alpha_loss.cpu().detach().numpy().item(),
+                                   "entropy": entropy.mean().cpu().detach().numpy().item(),
+                                   "bc_alpha": self.bc_alpha().cpu().detach().numpy().item(),
                                    "warmup_steps": total_it})
 
             if not os.path.exists(bc_save_dir):
@@ -146,7 +154,7 @@ class FisherBRC:
         :param total_time_step: the total iteration times for training Fisher_BRC
         :return: None
         """
-        self.warm_up(self.warmup_steps)
+        self.warm_up(self.warmup_steps, evaluate=True)
 
         for total_it in tqdm(range(1, int(total_time_step) + 1)):
 
@@ -185,7 +193,7 @@ class FisherBRC:
                            "grad_norm_mean": grad_loss.cpu().detach().numpy().item()/2,
                            "Q_pi_mean": Q_pi.mean().cpu().detach().numpy().item(),
                            "evaluate_rewards": evaluate_reward,
-                           "log_alpha": self.log_alpha.cpu().detach().numpy().item(),
+                           "alpha": self.alpha().cpu().detach().numpy().item(),
                            "alpha_loss": alpha_loss.cpu().detach().numpy().item(),
                            "it_steps": total_it,
                            })
@@ -304,15 +312,31 @@ class FisherBRC:
     def alpha(self):
         return torch.exp(self.log_alpha)
 
+    def bc_alpha(self):
+        return torch.exp(self.bc_log_alpha)
+
     def train_bc(self, state, action):
-        log_pi = self.bc.get_log_density(state, action)
+        bc_dist = self.bc.get_dist(state)
 
-        bc_loss = - torch.mean(log_pi)
+        log_mu = bc_dist.log_prob(action.cpu()).to(self.device)
 
-        self.bc_optim.zero_grad()
+        sampled_actions = bc_dist.sample()
+        entropy = - bc_dist.log_prob(sampled_actions).to(self.device)
+
+        bc_loss = - torch.mean(log_mu + self.bc_alpha().detach() * entropy)
+
+        bc_alpha_loss = self.bc_alpha() * torch.mean(entropy - self.target_entropy).item()
+
+        self.bc_optim.zero_grad(set_to_none=True)
         bc_loss.backward()
         self.bc_optim.step()
-        return bc_loss
+        self.bc_scheduler.step()
+
+        self.bc_alpha_optim.zero_grad(set_to_none=True)
+        bc_alpha_loss.backward()
+        self.bc_alpha_optim.step()
+
+        return bc_loss, bc_alpha_loss, entropy
 
     def rollout_evaluate(self):
         """

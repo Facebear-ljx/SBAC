@@ -20,7 +20,7 @@ def main():
     parser.add_argument('--warmup_steps', default=int(1e+6), type=int, help='total iteration steps to train EBM')
     parser.add_argument('--scale_state', default=None)
     parser.add_argument('--scale_action', default=False)
-    parser.add_argument('--lr_bc', default=3e-4, type=float)
+    parser.add_argument('--lr_bc', default=1e-3, type=float)
     parser.add_argument('--lr_actor', default=3e-4, type=float)
     parser.add_argument('--lr_critic', default=3e-4, type=float)
     parser.add_argument("--seed", default=seed, type=int)  # Sets Gym, PyTorch and Numpy seeds
