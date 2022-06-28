@@ -182,7 +182,7 @@ class FisherBRC:
                 wandb.log({"actor_loss": actor_loss.cpu().detach().numpy().item(),
                            "critic_loss": critic_loss.cpu().detach().numpy().item(),
                            "critic_loss_in": critic_loss_in.cpu().detach().numpy().item(),
-                           "grad_loss": grad_loss.cpu().detach().numpy().item(),
+                           "grad_norm_mean": grad_loss.cpu().detach().numpy().item()/2,
                            "Q_pi_mean": Q_pi.mean().cpu().detach().numpy().item(),
                            "evaluate_rewards": evaluate_reward,
                            "log_alpha": self.log_alpha.cpu().detach().numpy().item(),
@@ -216,7 +216,8 @@ class FisherBRC:
 
         O1_grads = torch.square(torch.autograd.grad(O1_ood.sum() + O2_ood.sum(), policy_action,  create_graph=True)[0])
         # O2_grads = torch.autograd.grad(O2_ood.sum(), policy_action)[0] ** 2
-        grad_loss = torch.mean(O1_grads)
+        O1_grads_norm = torch.sum(O1_grads, dim=1)
+        grad_loss = torch.mean(O1_grads_norm)
 
         # final loss
         critic_loss = critic_loss_in + grad_loss * self.lmbda
