@@ -323,20 +323,20 @@ class Actor_multinormal(nn.Module):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        mu = self.mu_head(x).cpu()
+        mu = self.mu_head(x)
 
         log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma).cpu()
+        sigma_tril = torch.diag(sigma)
 
-        a_distribution = MultivariateNormal(mu, sigma_tril)
+        a_distribution = MultivariateNormal(mu, scale_tril=sigma_tril)
 
         # a_distribution = self.tranfer_dist_cuda(a_distribution)  # cuda
 
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
         action = tanh_distribution.rsample()
-        log_pi = tanh_distribution.log_prob(action).to(self.device)
+        log_pi = tanh_distribution.log_prob(action)
         # logp_pi -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1)
         log_pi = torch.unsqueeze(log_pi, dim=1)
 
@@ -350,21 +350,21 @@ class Actor_multinormal(nn.Module):
             y = torch.tensor(y, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        mu = self.mu_head(x).cpu()
+        mu = self.mu_head(x)
 
         log_sigma = torch.clip(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma).cpu()
+        sigma_tril = torch.diag(sigma)
 
         y = torch.clip(y, -1. + EPS, 1. - EPS)
-        y = torch.atanh(y).cpu()
+        y = torch.atanh(y)
 
         mu = torch.clip(mu, MEAN_MIN, MEAN_MAX)
-        a_distribution = MultivariateNormal(mu, sigma_tril)  # cpu
+        a_distribution = MultivariateNormal(mu, scale_tril=sigma_tril)  # cpu
 
         # a_distribution = self.tranfer_dist_cuda(a_distribution)  # cuda
 
-        log_pi = a_distribution.log_prob(y).to(self.device)
+        log_pi = a_distribution.log_prob(y)
         # a_distribution = Normal(mu, sigma)
         # logp_pi = a_distribution.log_prob(y).sum(axis=-1)
         # logp_pi -= (2 * (np.log(2) - y - F.softplus(-2 * y))).sum(axis=1)
@@ -381,11 +381,11 @@ class Actor_multinormal(nn.Module):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        mu = self.mu_head(x).cpu()
+        mu = self.mu_head(x)
 
         log_sigma = torch.clip(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma).cpu()
+        sigma_tril = torch.diag(sigma)
 
         a_distribution = MultivariateNormal(loc=mu, scale_tril=sigma_tril)  # multivariate Normal is faster in cpu
 
@@ -393,7 +393,7 @@ class Actor_multinormal(nn.Module):
 
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
-        action = tanh_distribution.rsample().to(self.device)
+        action = tanh_distribution.rsample()
         # action = torch.tanh(action)
         return action
 
@@ -408,15 +408,15 @@ class Actor_multinormal(nn.Module):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        mu = self.mu_head(x).cpu()
+        mu = self.mu_head(x)
 
         log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma).cpu()
+        sigma_tril = torch.diag(sigma)
         # end_inference = datetime.datetime.now()
         # inference_time = (end_inference - start_inference).microseconds
 
-        a_distribution = MultivariateNormal(mu, sigma_tril)  # main time consumer
+        a_distribution = MultivariateNormal(mu, scale_tril=sigma_tril)  # main time consumer
         # start_transformation = datetime.datetime.now()
         # a_distribution = self.tranfer_dist_cuda(a_distribution)  # cuda
 

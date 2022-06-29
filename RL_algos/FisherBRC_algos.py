@@ -159,31 +159,31 @@ class FisherBRC:
         for total_it in tqdm(range(1, int(total_time_step) + 1)):
 
             # sample data
-            sample_start_time = datetime.datetime.now()
+            # sample_start_time = datetime.datetime.now()
             state, action, next_state, reward, not_done = self.replay_buffer.sample_w_o_next_acion(self.batch_size)
             reward = reward + self.reward_bonus
-            sample_end_time = datetime.datetime.now()
-            sample_time_duration = (sample_end_time - sample_start_time).microseconds
+            # sample_end_time = datetime.datetime.now()
+            # sample_time_duration = (sample_end_time - sample_start_time).microseconds
 
             # update Critic
-            critic_start_time = datetime.datetime.now()
+            # critic_start_time = datetime.datetime.now()
             critic_loss, \
             critic_loss_in, \
             grad_loss, \
             dis_pi, \
             dis_mu = self.train_Q(state, action, next_state, reward, not_done)
-            critic_end_time = datetime.datetime.now()
-            critic_time = (critic_end_time - critic_start_time).microseconds
+            # critic_end_time = datetime.datetime.now()
+            # critic_time = (critic_end_time - critic_start_time).microseconds
 
             # update actor
-            actor_start_time = datetime.datetime.now()
+            # actor_start_time = datetime.datetime.now()
             actor_loss, alpha_loss, Q_pi = self.train_actor_with_auto_alpha(state, dis_mu, dis_pi)
-            actor_end_time = datetime.datetime.now()
-            actor_time = (actor_end_time - actor_start_time).microseconds
+            # actor_end_time = datetime.datetime.now()
+            # actor_time = (actor_end_time - actor_start_time).microseconds
 
-            wandb.log({"sample_time": sample_time_duration,
-                       "critic_time": critic_time,
-                       "actor_time": actor_time})
+            # wandb.log({"sample_time": sample_time_duration,
+                       # "critic_time": critic_time,
+                       # "actor_time": actor_time})
 
             if total_it % self.evaluate_freq == 0:
                 evaluate_reward = self.rollout_evaluate()
@@ -258,7 +258,7 @@ class FisherBRC:
         O1, O2 = self.critic_net(state, action)
         dis_mu = self.bc.get_dist(state)
         action = torch.clip(action, min=-self.max_action+1e-5, max=self.max_action-1e-5)
-        log_mu = torch.unsqueeze(dis_mu.log_prob(action.cpu()).detach().to(self.device), dim=1)
+        log_mu = torch.unsqueeze(dis_mu.log_prob(action).detach(), dim=1)
         Q1 = O1 + log_mu
         Q2 = O2 + log_mu
         return Q1, Q2, dis_mu
@@ -266,7 +266,7 @@ class FisherBRC:
     def get_min_Q(self, state, action, dis_mu):
         O1, O2 = self.critic_net(state, action)
         min_O = torch.min(O1, O2)
-        log_mu = torch.unsqueeze(dis_mu.log_prob(action.cpu()).to(self.device), dim=1)
+        log_mu = torch.unsqueeze(dis_mu.log_prob(action), dim=1)
         min_Q = min_O + log_mu
         return min_Q
 
@@ -278,8 +278,8 @@ class FisherBRC:
         # action_pi, log_pi, _ = self.actor_net(state)
         action_pi = dis_pi.rsample()
         action_pi = torch.clip(action_pi, min=-self.max_action+1e-5, max=self.max_action-1e-5)
-        log_pi = torch.unsqueeze(dis_pi.log_prob(action_pi).to(self.device), dim=1)
-        action_pi = action_pi.to(self.device)
+        log_pi = torch.unsqueeze(dis_pi.log_prob(action_pi), dim=1)
+        action_pi = action_pi
         # action_pi = a_distribution.rsample()
         # log_pi = a_distribution.log_prob(action_pi)
         Q_pi = self.get_min_Q(state, action_pi, dis_mu)
@@ -321,12 +321,12 @@ class FisherBRC:
         bc_dist = self.bc.get_dist(state)
 
         action = torch.clip(action, min=-self.max_action+1e-5, max=self.max_action-1e-5)
-        log_mu = bc_dist.log_prob(action.cpu()).to(self.device)
+        log_mu = bc_dist.log_prob(action)
 
         sampled_actions = bc_dist.sample()
         sampled_actions = torch.clip(sampled_actions, min=-self.max_action+1e-5, max=self.max_action-1e-5)
 
-        entropy = - bc_dist.log_prob(sampled_actions).to(self.device)
+        entropy = - bc_dist.log_prob(sampled_actions)
 
         bc_loss = - torch.mean(log_mu + self.bc_alpha().detach() * entropy)
 
