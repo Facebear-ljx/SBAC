@@ -175,7 +175,7 @@ class FisherBRC:
 
             # update actor
             # actor_start_time = datetime.datetime.now()
-            actor_loss, alpha_loss, Q_pi, log_pi = self.train_actor_with_auto_alpha(state)
+            actor_loss, alpha_loss, Q_pi = self.train_actor_with_auto_alpha(state)
             # actor_end_time = datetime.datetime.now()
             # actor_time = (actor_end_time - actor_start_time).microseconds
 
@@ -193,7 +193,7 @@ class FisherBRC:
                            "evaluate_rewards": evaluate_reward,
                            "alpha": self.alpha().cpu().detach().numpy().item(),
                            "alpha_loss": alpha_loss.cpu().detach().numpy().item(),
-                           "log_pi": log_pi.mean().cpu().detach().numpy().item(),
+                           # "log_pi": log_pi.mean().cpu().detach().numpy().item(),
                            "it_steps": total_it,
                            })
 
@@ -207,18 +207,25 @@ class FisherBRC:
         """
         # in-distribution loss
         with torch.no_grad():
-            next_action = self.actor_net.get_action(next_state)  # 1
+            next_action = self.actor_net.get_action(next_state)
+            # start1 = datetime.datetime.now()  # 1
             target_Q = self.get_Q_target(next_state, next_action)  # 2
+            # start2 = datetime.datetime.now()
             target_Q = reward + not_done * self.gamma * target_Q
 
+        # start3 = datetime.datetime.now()
         Q1, Q2 = self.get_Q(state, action)  # 3
+        # start4 = datetime.datetime.now()
         critic_loss_in = nn.MSELoss()(Q1, target_Q) + nn.MSELoss()(Q2, target_Q)
 
         # gradient loss
         # dis_pi = self.actor_net.get_dist(state)
         # policy_action = dis_pi.sample().to(self.device)
         # policy_action.requires_grad_(True)
-        policy_action = self.actor_net.get_action(state)
+        # start5 = datetime.datetime.now()
+        policy_action = self.actor_net.get_action(state).detach()
+        policy_action.requires_grad_(True)
+        # start6 = datetime.datetime.now()
         O1_ood, O2_ood = self.critic_net(state, policy_action)
 
         O1_grads = torch.square(torch.autograd.grad(O1_ood.sum() + O2_ood.sum(), policy_action,  create_graph=True)[0])
@@ -230,16 +237,17 @@ class FisherBRC:
         critic_loss = critic_loss_in + grad_loss * self.lmbda
 
         # Optimize Critic
-        critic_start = datetime.datetime.now()
-        self.critic_optim.zero_grad()
+        # critic_start = datetime.datetime.now()
+        self.critic_optim.zero_grad(set_to_none=True)
         critic_loss.backward()
         self.critic_optim.step()
-        critic_end = datetime.datetime.now()
+        # critic_end = datetime.datetime.now()
 
-        critic_optimize_time = (critic_end - critic_start).microseconds
-        wandb.log({
-            "critic_optimize_time": critic_optimize_time
-        })
+        # print((start2-start1).microseconds, (start4-start3).microseconds, (start6-start5).microseconds, (critic_end - start1).microseconds, (critic_end - critic_start).microseconds)
+        # critic_optimize_time = (critic_end - critic_start).microseconds
+        # wandb.log({
+        #     "critic_optimize_time": critic_optimize_time
+        # })
         # update frozen target critic network
         for param, target_param in zip(self.critic_net.parameters(), self.critic_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
@@ -249,7 +257,7 @@ class FisherBRC:
     def get_Q_target(self, state, action):
         target_O1, target_O2 = self.critic_target(state, action)
         target_O = torch.min(target_O1, target_O2)
-        log_mu = self.bc.get_log_density(state, action)
+        log_mu = self.bc.get_log_density(state, action).detach()
         # assert (log_mu.mean() >= -100)
         target_Q = target_O + log_mu
         return target_Q
@@ -259,7 +267,7 @@ class FisherBRC:
         # dis_mu = self.bc.get_dist(state)
         # action = torch.clip(action, min=-self.max_action+1e-5, max=self.max_action-1e-5)
         # log_mu = torch.unsqueeze(dis_mu.log_prob(action).detach(), dim=1)
-        log_mu = self.bc.get_log_density(state, action)
+        log_mu = self.bc.get_log_density(state, action).detach()
         # assert (log_mu.mean() >= -100)
         Q1 = O1 + log_mu
         Q2 = O2 + log_mu
@@ -272,6 +280,11 @@ class FisherBRC:
         min_Q = min_O + log_mu
         # assert (log_mu.mean() >= -100)
         return min_Q
+
+    def get_one_Q(self, state, action):
+        O1 = self.critic_net.Q1(state, action)
+        log_mu = self.bc.get_log_density(state, action)
+        return O1 + log_mu
 
     def train_actor_with_auto_alpha(self, state):
         """
@@ -286,22 +299,22 @@ class FisherBRC:
         action_pi, log_pi, _ = self.actor_net(state)
         # action_pi = a_distribution.rsample()
         # log_pi = a_distribution.log_prob(action_pi)
-        Q_pi = self.get_min_Q(state, action_pi)
+        Q_pi = self.get_one_Q(state, action_pi)
         # assert (log_pi.mean() >= -100)
         # time_start = datetime.datetime.now()
         actor_loss = torch.mean(self.alpha().detach() * log_pi - Q_pi)
 
-        alpha_loss = self.alpha() * torch.mean(-log_pi - self.target_entropy).item()
+        alpha_loss = self.alpha() * torch.mean(-log_pi - self.target_entropy).detach().item()
         # time_cal_in_actor = datetime.datetime.now()
         # Optimize Actor
-        self.actor_optim.zero_grad()
+        self.actor_optim.zero_grad(set_to_none=True)
         actor_loss.backward()
         # torch.nn.utils.clip_grad_norm_(self.actor_net.parameters(), 5.0)
         self.actor_optim.step()
 
         # start_alpha = datetime.datetime.now()
         # Optimize alpha (the auto-adjust temperature in SAC)
-        self.alpha_optim.zero_grad()
+        self.alpha_optim.zero_grad(set_to_none=True)
         alpha_loss.backward()
         self.alpha_optim.step()
 
@@ -314,7 +327,7 @@ class FisherBRC:
                    # "calculation_in_actor": time_calculation
                    # })
 
-        return actor_loss, alpha_loss, Q_pi, log_pi
+        return actor_loss, alpha_loss, Q_pi
 
     def alpha(self):
         return torch.exp(self.log_alpha)

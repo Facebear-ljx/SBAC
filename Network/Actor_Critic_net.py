@@ -6,8 +6,8 @@ import torch.nn.functional as F
 import numpy as np
 from torch.distributions import MultivariateNormal, Normal
 
-MEAN_MIN = -9.0
-MEAN_MAX = 9.0
+MEAN_MIN = -3.0
+MEAN_MAX = 3.0
 LOG_STD_MIN = -5
 LOG_STD_MAX = 10
 EPS = 1e-7
@@ -332,22 +332,26 @@ class Actor_multinormal(nn.Module):
         log_sigma = torch.clamp(sigma, LOG_STD_MIN, LOG_STD_MAX)
 
         sigma = torch.exp(log_sigma)
+        # start1 = datetime.datetime.now()
         sigma_tril = torch.diag_embed(sigma)
-
+        # start2 = datetime.datetime.now()
         a_distribution = MultivariateNormal(mu, scale_tril=sigma_tril)
-
+        # start3 = datetime.datetime.now()
         # a_distribution = self.tranfer_dist_cuda(a_distribution)  # cuda
 
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
+        # start4 = datetime.datetime.now()
         action = tanh_distribution.rsample()
         action = torch.clip(action, min=-self.action_scale+EPS, max=self.action_scale-EPS)
-
+        # start5 = datetime.datetime.now()
         log_pi = tanh_distribution.log_prob(action)
+        # start6 = datetime.datetime.now()
         # logp_pi -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1)
         log_pi = torch.unsqueeze(log_pi, dim=1)
-
-        # action = torch.tanh(action)
+        # print("diag_time:%d\ninit_time:%d\ntran_time:%d", (start2-start1).microseconds,
+        # (start3-start2).microseconds, (start4-start3).microseconds, (start5-start4).microseconds,
+        # (start6-start5).microseconds) action = torch.tanh(action)
         return action, log_pi, tanh_distribution
 
     def get_log_density(self, x, y):
@@ -428,7 +432,7 @@ class Actor_multinormal(nn.Module):
         log_sigma = torch.clamp(sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
         sigma_tril = torch.diag_embed(sigma)
-        # end_inference = datetime.datetime.now()
+        end_inference = datetime.datetime.now()
         # inference_time = (end_inference - start_inference).microseconds
 
         a_distribution = MultivariateNormal(mu, scale_tril=sigma_tril)  # main time consumer
