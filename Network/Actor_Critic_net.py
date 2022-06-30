@@ -289,13 +289,15 @@ class Actor_multinormal_simplified(nn.Module):
 
 
 class Actor_multinormal(nn.Module):
-    def __init__(self, num_state, num_action, num_hidden, device):
+    def __init__(self, num_state, num_action, num_hidden, device, action_scale=1.):
         super(Actor_multinormal, self).__init__()
         self.device = device
         self.fc1 = nn.Linear(num_state, num_hidden)
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.mu_head = nn.Linear(num_hidden, num_action)
-        self.sigma = nn.Parameter(torch.zeros(num_action, dtype=torch.float32))
+        # self.sigma = nn.Parameter(torch.zeros(num_action, dtype=torch.float32))
+        self.sigma_head = nn.Linear(num_hidden, num_action)
+        self.action_scale = action_scale
 
     def tranfer_dist_cuda(self, a_dist):
         """
@@ -324,10 +326,13 @@ class Actor_multinormal(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
+        sigma = self.sigma_head(x)
+        # assert (sigma.mean() >= -5)
+        mu = torch.clamp(mu, MEAN_MIN, MEAN_MAX)
+        log_sigma = torch.clamp(sigma, LOG_STD_MIN, LOG_STD_MAX)
 
-        log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma)
+        sigma_tril = torch.diag_embed(sigma)
 
         a_distribution = MultivariateNormal(mu, scale_tril=sigma_tril)
 
@@ -336,12 +341,14 @@ class Actor_multinormal(nn.Module):
         transforms = [torch.distributions.TanhTransform()]
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
         action = tanh_distribution.rsample()
+        action = torch.clip(action, min=-self.action_scale+EPS, max=self.action_scale-EPS)
+
         log_pi = tanh_distribution.log_prob(action)
         # logp_pi -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1)
         log_pi = torch.unsqueeze(log_pi, dim=1)
 
         # action = torch.tanh(action)
-        return action, log_pi, a_distribution
+        return action, log_pi, tanh_distribution
 
     def get_log_density(self, x, y):
         if isinstance(x, np.ndarray):
@@ -351,20 +358,24 @@ class Actor_multinormal(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
-
-        log_sigma = torch.clip(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = self.sigma_head(x)
+        # assert (sigma.mean() >= -5)
+        mu = torch.clamp(mu, MEAN_MIN, MEAN_MAX)
+        log_sigma = torch.clamp(sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma)
+        sigma_tril = torch.diag_embed(sigma)
 
         y = torch.clip(y, -1. + EPS, 1. - EPS)
-        y = torch.atanh(y)
+        # y = torch.atanh(y)
 
-        mu = torch.clip(mu, MEAN_MIN, MEAN_MAX)
+        # mu = torch.clip(mu, MEAN_MIN, MEAN_MAX)
         a_distribution = MultivariateNormal(mu, scale_tril=sigma_tril)  # cpu
+        transforms = [torch.distributions.TanhTransform()]
+        tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
 
         # a_distribution = self.tranfer_dist_cuda(a_distribution)  # cuda
 
-        log_pi = a_distribution.log_prob(y)
+        log_pi = tanh_distribution.log_prob(y)
         # a_distribution = Normal(mu, sigma)
         # logp_pi = a_distribution.log_prob(y).sum(axis=-1)
         # logp_pi -= (2 * (np.log(2) - y - F.softplus(-2 * y))).sum(axis=1)
@@ -382,10 +393,12 @@ class Actor_multinormal(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
-
-        log_sigma = torch.clip(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
+        sigma = self.sigma_head(x)
+        # assert (sigma.mean() >= -5)
+        mu = torch.clamp(mu, MEAN_MIN, MEAN_MAX)
+        log_sigma = torch.clamp(sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma)
+        sigma_tril = torch.diag_embed(sigma)
 
         a_distribution = MultivariateNormal(loc=mu, scale_tril=sigma_tril)  # multivariate Normal is faster in cpu
 
@@ -409,10 +422,12 @@ class Actor_multinormal(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
+        sigma = self.sigma_head(x)
 
-        log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
+        mu = torch.clamp(mu, MEAN_MIN, MEAN_MAX)
+        log_sigma = torch.clamp(sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
-        sigma_tril = torch.diag(sigma)
+        sigma_tril = torch.diag_embed(sigma)
         # end_inference = datetime.datetime.now()
         # inference_time = (end_inference - start_inference).microseconds
 
