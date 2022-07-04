@@ -4,13 +4,13 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import numpy as np
-from torch.distributions import MultivariateNormal, Normal
+from torch.distributions import MultivariateNormal, Normal, Categorical, Independent
 
 MEAN_MIN = -3.0
 MEAN_MAX = 3.0
-LOG_STD_MIN = -5
-LOG_STD_MAX = 10
-EPS = 1e-7
+LOG_STD_MIN = -20
+LOG_STD_MAX = 2
+EPS = 1e-6
 
 
 class BC(nn.Module):
@@ -354,7 +354,7 @@ class Actor_multinormal(nn.Module):
         # (start6-start5).microseconds) action = torch.tanh(action)
         return action, log_pi, tanh_distribution
 
-    def get_log_density(self, x, y):
+    def get_log_density(self, x, y, return_distribution=False):
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float).to(self.device)
         if isinstance(y, np.ndarray):
@@ -384,11 +384,15 @@ class Actor_multinormal(nn.Module):
         # logp_pi = a_distribution.log_prob(y).sum(axis=-1)
         # logp_pi -= (2 * (np.log(2) - y - F.softplus(-2 * y))).sum(axis=1)
         log_pi = torch.unsqueeze(log_pi, dim=1)
-        return log_pi
+        if return_distribution:
+            return log_pi, tanh_distribution
+        else:
+            return log_pi
 
-    def get_action(self, x):
+    def get_action(self, x, return_distribution=False):
         """
         generate actions according to the state
+        :param return_distribution:
         :param x: state
         :return: action
         """
@@ -412,7 +416,10 @@ class Actor_multinormal(nn.Module):
         tanh_distribution = torch.distributions.TransformedDistribution(a_distribution, transforms)
         action = tanh_distribution.rsample()
         # action = torch.tanh(action)
-        return action
+        if return_distribution:
+            return action, tanh_distribution
+        else:
+            return action
 
     def get_dist(self, x):
         """
@@ -432,7 +439,7 @@ class Actor_multinormal(nn.Module):
         log_sigma = torch.clamp(sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
         sigma_tril = torch.diag_embed(sigma)
-        end_inference = datetime.datetime.now()
+        # end_inference = datetime.datetime.now()
         # inference_time = (end_inference - start_inference).microseconds
 
         a_distribution = MultivariateNormal(mu, scale_tril=sigma_tril)  # main time consumer
