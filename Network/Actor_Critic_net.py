@@ -214,13 +214,15 @@ class BC_VAE(nn.Module):
 
 
 class Actor_multinormal_simplified(nn.Module):
-    def __init__(self, num_state, num_action, num_hidden, device):
+    def __init__(self, num_state, num_action, num_hidden, device, max_action=1., min_action=-1.):
         super(Actor_multinormal_simplified, self).__init__()
         self.device = device
         self.fc1 = nn.Linear(num_state, num_hidden)
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.mu_head = nn.Linear(num_hidden, num_action)
         self.sigma = nn.Parameter(torch.zeros(num_action, dtype=torch.float32))
+        self.action_scale = (max_action - min_action)/2
+        self.action_loc = (max_action + min_action)/2
 
     def forward(self, x):
         if isinstance(x, np.ndarray):
@@ -247,7 +249,7 @@ class Actor_multinormal_simplified(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
-        mu = torch.tanh(mu)
+        mu = torch.tanh(mu) * self.action_scale + self.action_loc
         log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
         sigma_tril = torch.diag(sigma)
@@ -263,7 +265,7 @@ class Actor_multinormal_simplified(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
-        mu = torch.tanh(mu)
+        mu = torch.tanh(mu) * self.action_scale + self.action_loc
         log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
         sigma_tril = torch.diag(sigma)
@@ -279,7 +281,7 @@ class Actor_multinormal_simplified(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         mu = self.mu_head(x)
-        mu = torch.tanh(mu)
+        mu = torch.tanh(mu) * self.action_scale + self.action_loc
         log_sigma = torch.clamp(self.sigma, LOG_STD_MIN, LOG_STD_MAX)
         sigma = torch.exp(log_sigma)
         sigma_tril = torch.diag(sigma)
@@ -567,7 +569,7 @@ class Actor(nn.Module):
 
 
 class Actor_deterministic(nn.Module):
-    def __init__(self, num_state, num_action, num_hidden, device, max_action=1.):
+    def __init__(self, num_state, num_action, num_hidden, device, max_action=1., min_action=-1.):
         """
         Deterministic Actor network, used for TD3, DDPG, BCQ, TD3_BC
         :param num_state: dimension of the state
@@ -581,6 +583,8 @@ class Actor_deterministic(nn.Module):
         self.fc2 = nn.Linear(num_hidden, num_hidden)
         self.action = nn.Linear(num_hidden, num_action)
         self.max_action = max_action
+        self.action_scale = (max_action - min_action)/2
+        self.action_loc = (max_action + min_action)/2
 
     def forward(self, x):
         if isinstance(x, np.ndarray):
@@ -588,7 +592,7 @@ class Actor_deterministic(nn.Module):
         a = F.relu(self.fc1(x))
         a = F.relu(self.fc2(a))
         a = self.action(a)
-        return torch.tanh(a) * self.max_action
+        return torch.tanh(a) * self.action_scale + self.action_loc
 
     def get_action(self, x):
         if isinstance(x, np.ndarray):
@@ -596,7 +600,7 @@ class Actor_deterministic(nn.Module):
         a = F.relu(self.fc1(x))
         a = F.relu(self.fc2(a))
         a = self.action(a)
-        return torch.tanh(a) * self.max_action
+        return torch.tanh(a) * self.action_scale + self.action_loc
 
 
 class Double_Critic(nn.Module):
